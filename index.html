@@ -108,6 +108,30 @@
     padding:6px 10px;border-radius:6px;font-size:11px}
   .foot button:hover{color:var(--txt)}
 
+  /* 순위표 카드 */
+  .lb-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+  .lb-head h3{margin:0;font-size:13px;font-weight:600}
+  .lb-mine{color:var(--mut);font-weight:400;font-size:11px;font-family:var(--mono)}
+  #lbRefresh{background:var(--panel2);border:1px solid var(--line);color:var(--mut);
+    width:26px;height:26px;border-radius:6px;font-size:13px;padding:0}
+  #lbRefresh:hover{color:var(--txt)}
+  .lb-nick{display:flex;gap:6px;margin-bottom:9px}
+  .lb-nick input{flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:6px;padding:8px;font-size:12.5px}
+  #btnSubmit{background:var(--acc);color:#1a1a1a;border:none;border-radius:6px;
+    padding:8px 12px;font-size:12.5px;font-weight:700;white-space:nowrap}
+  #btnSubmit:disabled{opacity:.5}
+  .lb-list{display:flex;flex-direction:column;gap:2px;max-height:240px;overflow-y:auto}
+  .lb-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;font-size:12px}
+  .lb-row:nth-child(odd){background:var(--panel2)}
+  .lb-row.me{background:rgba(232,184,75,.16);border:1px solid rgba(232,184,75,.4)}
+  .lb-rank{width:22px;text-align:center;font-family:var(--mono);color:var(--mut);flex:none}
+  .lb-rank.top{color:var(--acc);font-weight:700}
+  .lb-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lb-pct{font-family:var(--mono);font-weight:600;flex:none}
+  .lb-meta{color:var(--mut);font-size:10px;font-family:var(--mono);flex:none}
+  .lb-empty{color:var(--mut);font-size:12px;text-align:center;padding:14px 0}
+
   /* 매매규칙 팁 카드 (접이식) */
   .tip-card{padding:0;overflow:hidden}
   .tip-card>summary{list-style:none;cursor:pointer;padding:12px 14px;font-size:12.5px;
@@ -282,6 +306,19 @@
       <div class="pos-list" id="posList"></div>
     </div>
 
+    <!-- 순위표 -->
+    <div class="card lb-card">
+      <div class="lb-head">
+        <h3>🏆 순위표 <span id="lbMine" class="lb-mine"></span></h3>
+        <button id="lbRefresh" title="새로고침">↻</button>
+      </div>
+      <div class="lb-nick">
+        <input id="nickInput" maxlength="12" placeholder="별명 입력">
+        <button id="btnSubmit">기록 제출</button>
+      </div>
+      <div class="lb-list" id="lbList"><div class="lb-empty">불러오는 중…</div></div>
+    </div>
+
     <details class="card tip-card">
       <summary>📋 추천 매매규칙 <span class="tip-arrow">▾</span></summary>
       <div class="tip-body">
@@ -330,6 +367,12 @@ try {
   const SPREAD_ON=0.4;
   let entryMode = params.get('em')==='open' ? 'open' : 'close';   // close=현재 종가, open=다음 봉 시가
   let SPREAD = params.get('sp')==='1' ? SPREAD_ON : 0;
+  // ===================== 순위표 (Supabase) =====================
+  const SB_URL='https://zpztmhjrhzddvlonbyhp.supabase.co';
+  const SB_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpwenRtaGpyaHpkZHZsb25ieWhwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyODgzOTMsImV4cCI6MjA5Nzg2NDM5M30.mAw6euNmv48R0lH5Hfgsnoizb6-L9K8ft9JhyICIkdc';
+  const SB_H={apikey:SB_KEY,Authorization:'Bearer '+SB_KEY};
+  const lsGet=k=>{try{return localStorage.getItem(k);}catch(e){return null;}};
+  const lsSet=(k,v)=>{try{localStorage.setItem(k,v);}catch(e){}};
   function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
   const rng = mulberry32(SEED);
   function gauss(){let u=0,v=0;while(u===0)u=rng();while(v===0)v=rng();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
@@ -710,6 +753,15 @@ try {
       for(let k=s0;k<sessN;k++){const S=allSess[k];
         const col=SESS_COL[S.sess], rEnd=Math.min(S.end,rightT);
         drawBox(S.start,rEnd,S.high,S.low,col[0],col[1],col[2]);
+        // 중심 점선 (고저 절반)
+        if(vr&&!(rEnd<vr.from||S.start>vr.to)){
+          const lt=Math.max(S.start,vr.from), rt=Math.min(rEnd,vr.to);
+          const x1=X(lt),x2=X(rt),ym=Y((S.high+S.low)/2);
+          if(x1!=null&&x2!=null&&ym!=null){
+            sctx.strokeStyle=col[1]; sctx.lineWidth=1; sctx.setLineDash([2,2]);
+            sctx.beginPath();sctx.moveTo(x1,ym);sctx.lineTo(x2,ym);sctx.stroke();sctx.setLineDash([]);
+          }
+        }
       }
     }
     // FVG (최근 활성 8개)
@@ -790,7 +842,7 @@ try {
 
   // ===================== 5. 트레이딩 엔진 =====================
   const CONTRACT=100;
-  let st={balance:INIT,positions:[],pending:[],lev:100,lot:0.01,nid:1,busted:false};
+  let st={balance:INIT,positions:[],pending:[],lev:100,lot:0.01,nid:1,busted:false,submitted:false};
 
   const curPrice=()=>allData[idx-1].close;
   // 청산가 = 중간가에서 스프레드 절반 불리 (롱=bid, 숏=ask)
@@ -854,6 +906,7 @@ try {
       st.balance=Math.max(0,st.balance);st.positions=[];
       st.busted=st.balance<=0;
       toast('⚠ 마진콜 — 전체 강제청산',true);
+      if(st.busted)submitScore('파산');
     }
   }
 
@@ -874,7 +927,8 @@ try {
     calcMarker(idx);applyTouchMarkers();
     chart.timeScale().scrollToRealTime();
     checkLiq(c);
-    idx++;processDiv(idx-1);revealSMC(idx-1);drawSMC();render();
+    idx++;processDiv(idx-1);revealSMC(idx-1);drawSMC();render();setMine();
+    if(idx-START>=50&&!st.submitted)submitScore('50턴');
   }
 
   // ===================== 7. 렌더 =====================
@@ -988,6 +1042,65 @@ try {
   document.getElementById('balInput').value=INIT;
   setLot(0.01);
   render();
+
+  // ===================== 순위표 로직 =====================
+  const nickEl=document.getElementById('nickInput');
+  const lbListEl=document.getElementById('lbList');
+  const btnSubmitEl=document.getElementById('btnSubmit');
+  nickEl.value=lsGet('gold_nick')||'';
+  nickEl.oninput=()=>lsSet('gold_nick',nickEl.value.trim());
+
+  function curPct(){const px=curPrice();return (equity(px)-INIT)/INIT*100;}
+  function setMine(){document.getElementById('lbMine').textContent=
+    '내 수익률 '+(curPct()>=0?'+':'')+curPct().toFixed(2)+'%';}
+
+  async function loadBoard(){
+    try{
+      const url=SB_URL+'/rest/v1/leaderboard?select=nickname,pnl_pct,turns,reason&order=pnl_pct.desc&limit=30';
+      const r=await fetch(url,{headers:SB_H});
+      if(!r.ok)throw 0;
+      const rows=await r.json();
+      renderBoard(rows);
+    }catch(e){ lbListEl.innerHTML='<div class="lb-empty">순위표를 불러올 수 없어요</div>'; }
+  }
+  function renderBoard(rows){
+    if(!rows||!rows.length){lbListEl.innerHTML='<div class="lb-empty">아직 기록이 없어요 — 첫 주자가 되어보세요!</div>';return;}
+    const me=(nickEl.value||'').trim();
+    lbListEl.innerHTML=rows.map((r,i)=>{
+      const pct=(+r.pnl_pct), up=pct>0.005, dn=pct<-0.005;
+      const isMe=me&&r.nickname===me;
+      return `<div class="lb-row${isMe?' me':''}">
+        <span class="lb-rank${i<3?' top':''}">${i+1}</span>
+        <span class="lb-name">${esc(r.nickname)}</span>
+        <span class="lb-meta">${r.turns!=null?r.turns+'턴':''}${r.reason?'·'+esc(r.reason):''}</span>
+        <span class="lb-pct ${up?'pos-up':dn?'pos-dn':'pos-fl'}">${pct>=0?'+':''}${pct.toFixed(2)}%</span>
+      </div>`;
+    }).join('');
+  }
+  function esc(s){return String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
+
+  async function submitScore(reason){
+    if(st.submitted)return;
+    const nick=(nickEl.value||'').trim();
+    if(!nick){toast('별명을 입력하고 제출하세요',true); nickEl.focus(); return;}
+    st.submitted=true; btnSubmitEl.disabled=true; btnSubmitEl.textContent='제출됨';
+    const px=curPrice(), eq=equity(px), pct=(eq-INIT)/INIT*100, turn=idx-START;
+    try{
+      const r=await fetch(SB_URL+'/rest/v1/leaderboard',{method:'POST',
+        headers:{...SB_H,'Content-Type':'application/json'},
+        body:JSON.stringify({nickname:nick.slice(0,12),pnl_pct:+pct.toFixed(2),
+          equity:+eq.toFixed(2),turns:turn,reason,seed:SEED})});
+      if(!r.ok)throw 0;
+      toast('🏆 기록 제출 완료 ('+reason+')');
+      loadBoard();
+    }catch(e){ st.submitted=false; btnSubmitEl.disabled=false; btnSubmitEl.textContent='기록 제출';
+      toast('제출 실패 — 네트워크 확인',true); }
+  }
+
+  btnSubmitEl.onclick=()=>submitScore('수동');
+  document.getElementById('lbRefresh').onclick=loadBoard;
+  setMine();
+  loadBoard();
 
 } catch(err){console.error(err);
   document.body.insertAdjacentHTML('afterbegin',
