@@ -20,6 +20,19 @@
   #chart-container{flex:1;min-height:420px;background:#fff;border-radius:10px;overflow:hidden;
     position:relative;
     border:1px solid var(--line)}
+  /* 타임프레임 전환 바 */
+  .tf-bar{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+  .tf-arrow{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    width:30px;height:28px;border-radius:6px;font-size:12px;flex:none;padding:0}
+  .tf-arrow:active{background:var(--acc);color:#1a1a1a}
+  .tf-segs{display:flex;gap:3px;flex:1;overflow-x:auto;scrollbar-width:none}
+  .tf-segs::-webkit-scrollbar{display:none}
+  .tf-seg{background:var(--panel2);border:1px solid var(--line);color:var(--mut);
+    padding:5px 9px;border-radius:6px;font-size:11.5px;white-space:nowrap;flex:none}
+  .tf-seg.on{background:var(--acc);color:#1a1a1a;border-color:var(--acc);font-weight:700}
+  .tf-now{font-size:11px;color:var(--mut);font-family:var(--mono);flex:none;min-width:34px;text-align:right}
+  .tf-busy{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(255,255,255,.7);color:#333;font-size:13px;font-weight:600;z-index:5}
   .sub-wrap{position:relative;height:120px;flex:none;background:#fff;border-radius:10px;
     overflow:hidden;border:1px solid var(--line)}
   .sub-wrap > div{width:100%;height:100%}
@@ -201,7 +214,25 @@
 <div id="toast"></div>
 <div class="wrap">
   <div class="chart-stack">
-    <div id="chart-container"><canvas id="smc-overlay"></canvas></div>
+    <div class="tf-bar">
+      <button class="tf-arrow" id="tfPrev" title="작은 TF">◀</button>
+      <div class="tf-segs">
+        <button class="tf-seg" data-tf="m5">5분</button>
+        <button class="tf-seg" data-tf="m10">10분</button>
+        <button class="tf-seg" data-tf="m15">15분</button>
+        <button class="tf-seg" data-tf="m30">30분</button>
+        <button class="tf-seg on" data-tf="1h">1시간</button>
+        <button class="tf-seg" data-tf="2h">2시간</button>
+        <button class="tf-seg" data-tf="4h">4시간</button>
+        <button class="tf-seg" data-tf="1d">일봉</button>
+        <button class="tf-seg" data-tf="1w">주봉</button>
+      </div>
+      <span class="tf-now" id="tfLabel">1시간</span>
+      <button class="tf-arrow" id="tfNext" title="큰 TF">▶</button>
+    </div>
+    <div id="chart-container"><canvas id="smc-overlay"></canvas>
+      <div id="tfBusy" class="tf-busy">데이터 불러오는 중…</div>
+    </div>
     <div class="sub-wrap" id="rsi-wrap"><span class="sub-tag">RSI 14</span><div id="rsi-container"></div></div>
     <div class="sub-wrap" id="disp-wrap"><span class="sub-tag">이격도 20 (중심 0)</span><div id="disp-container"></div></div>
   </div>
@@ -278,15 +309,15 @@
     <div class="card">
       <div class="lbl" style="margin-bottom:8px">보조지표 표시</div>
       <div class="tgls" id="tgls">
-        <button class="tgl on" data-tg="ma">이동평균</button>
-        <button class="tgl on" data-tg="bb">볼린저20</button>
-        <button class="tgl on" data-tg="bb4">볼린저4</button>
+        <button class="tgl" data-tg="ma">이동평균</button>
+        <button class="tgl" data-tg="bb">볼린저20</button>
+        <button class="tgl" data-tg="bb4">볼린저4</button>
         <button class="tgl" data-tg="bb3">볼린저3</button>
-        <button class="tgl on" data-tg="open">시가선</button>
-        <button class="tgl on" data-tg="mark">밴드터치</button>
-        <button class="tgl on" data-tg="rsi">RSI</button>
-        <button class="tgl on" data-tg="disp">이격도</button>
-        <button class="tgl on" data-tg="div">다이버전스</button>
+        <button class="tgl" data-tg="open">시가선</button>
+        <button class="tgl" data-tg="mark">밴드터치</button>
+        <button class="tgl" data-tg="rsi">RSI</button>
+        <button class="tgl" data-tg="disp">이격도</button>
+        <button class="tgl" data-tg="div">다이버전스</button>
         <button class="tgl" data-tg="smcSwing">SMC 스윙</button>
         <button class="tgl" data-tg="smcBos">SMC 구조(BOS/CHoCH)</button>
         <button class="tgl" data-tg="smcOb">오더블록</button>
@@ -489,6 +520,64 @@ try {
   }
   const TOTAL=allData.length;
 
+  // ===================== 멀티 타임프레임 인프라 =====================
+  const TF_LIST=['m5','m10','m15','m30','1h','2h','4h','1d','1w'];
+  const TF_LABEL={m5:'5분',m10:'10분',m15:'15분',m30:'30분','1h':'1시간','2h':'2시간','4h':'4시간','1d':'일봉','1w':'주봉'};
+  const TF_DUR={m5:300,m10:600,m15:900,m30:1800,'1h':3600,'2h':7200,'4h':14400,'1d':86400,'1w':604800};
+  const HIGHER={'2h':1,'4h':1,'1d':1,'1w':1};       // 1h에서 리샘플
+  const SUB_SRC={m5:'data_m5.js',m15:'data_m15.js',m30:'data_m30.js'};
+  const SUB_VAR={m5:'XAU_M5',m15:'XAU_M15',m30:'XAU_M30'};
+  const VIEW_WIN=540;                               // 보는 TF 표시 창
+  let viewTF='1h'; const subData={};
+  // 하위 TF 디코더 (분델타 + 볼륨)
+  function decSub(s){const seg=s.split(';');const iv=+seg[0];let t=+seg[1];const A=new Array(seg.length-2);
+    for(let i=2;i<seg.length;i++){const a=seg[i].split(',');t+=(+a[0])*iv;
+      A[i-2]={time:t,open:+a[1],high:+a[2],low:+a[3],close:+a[4],vol:+a[5]};}return A;}
+  function resampleM10(m5){const out=new Array(Math.ceil(m5.length/2));
+    for(let i=0,j=0;i<m5.length;i+=2,j++){const a=m5[i],b=m5[i+1]||a;
+      out[j]={time:a.time,open:a.open,high:Math.max(a.high,b.high),low:Math.min(a.low,b.low),close:b.close,vol:a.vol+(b===a?0:b.vol)};}return out;}
+  // 07:00 KST 거래일 그리드 버킷 시작
+  function bucketStart(t,tf){
+    const k=new Date((t+9*3600)*1000);
+    const y=k.getUTCFullYear(),mo=k.getUTCMonth(),da=k.getUTCDate(),hh=k.getUTCHours();
+    let dayStart=Date.UTC(y,mo,da,7,0,0)/1000-9*3600; if(hh<7)dayStart-=86400;
+    if(tf==='1d')return dayStart;
+    if(tf==='1w'){const ds=new Date((dayStart+9*3600)*1000);return dayStart-((ds.getUTCDay()+6)%7)*86400;}
+    const dur=tf==='2h'?7200:14400;
+    return dayStart+Math.floor((t-dayStart)/dur)*dur;
+  }
+  // 공개된 1h봉(0..limit-1)만 리샘플 → 미래누출 없음 (마지막 봉 부분형성 OK)
+  function resampleHigher(limit,tf){const out=[];let cur=null;
+    for(let i=0;i<limit;i++){const b=allData[i],bs=bucketStart(b.time,tf);
+      if(!cur||cur.time!==bs){cur={time:bs,open:b.open,high:b.high,low:b.low,close:b.close};out.push(cur);}
+      else{if(b.high>cur.high)cur.high=b.high;if(b.low<cur.low)cur.low=b.low;cur.close=b.close;}}
+    return out.length>VIEW_WIN?out.slice(-VIEW_WIN):out;}
+  // 하위 TF: time+dur<=T 인 마지막 인덱스 (이분탐색)
+  function lastIdxLE(arr,T,dur){let lo=0,hi=arr.length-1,r=-1;
+    while(lo<=hi){const m=(lo+hi)>>1;if(arr[m].time+dur<=T){r=m;lo=m+1;}else hi=m-1;}return r;}
+  function sliceLower(tf){const arr=subData[tf],dur=TF_DUR[tf],T=allData[idx-1].time+3600;
+    const r=lastIdxLE(arr,T,dur);return arr.slice(Math.max(0,r+1-VIEW_WIN),r+1);}
+  // 보는 TF 기본지표 (SMA20/60/120, BB20, RSI14, 이격도20)
+  function basicInd(bars){const n=bars.length,c=bars.map(b=>b.close);
+    const s20=[],s60=[],s120=[],bu=[],bl=[],dp=[],rsi=[];
+    for(let i=0;i<n;i++){
+      if(i>=19){let s=0;for(let j=0;j<20;j++)s+=c[i-j];const m=s/20;s20[i]=m;
+        let v=0;for(let j=0;j<20;j++)v+=(c[i-j]-m)**2;const sd=Math.sqrt(v/20);
+        bu[i]=m+2*sd;bl[i]=m-2*sd;dp[i]=(c[i]-m)/m*100;}
+      if(i>=59){let s=0;for(let j=0;j<60;j++)s+=c[i-j];s60[i]=s/60;}
+      if(i>=119){let s=0;for(let j=0;j<120;j++)s+=c[i-j];s120[i]=s/120;}}
+    let ag=0,al=0;
+    for(let i=1;i<n;i++){const d=c[i]-c[i-1];
+      if(i<=14){if(d>0)ag+=d;else al-=d;if(i===14){ag/=14;al/=14;rsi[14]=100-100/(1+ag/(al||1e-9));}}
+      else{ag=(ag*13+(d>0?d:0))/14;al=(al*13+(d<0?-d:0))/14;rsi[i]=100-100/(1+ag/(al||1e-9));}}
+    return {s20,s60,s120,bu,bl,dp,rsi};}
+  function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
+  async function loadSub(tf){
+    if(tf==='m10'){if(!subData.m5)await loadSub('m5');subData.m10=resampleM10(subData.m5);return;}
+    if(subData[tf])return;
+    await loadScript(SUB_SRC[tf]); subData[tf]=decSub(window[SUB_VAR[tf]]);
+  }
+
   // ===================== 3. 지표 계산 =====================
   let ind={s20:[],s60:[],s120:[],bU:[],bL:[],b4U:[],b4L:[],b3U:[],b3L:[],dOp:[],wOp:[],rsi:[],dp20:[]};
   for(let k in ind)ind[k]=new Array(TOTAL).fill(null);
@@ -532,7 +621,7 @@ try {
   // ===================== 4. 마커 · 다이버전스 · 토글 =====================
   let markers=[], rsiMarkers=[], divSeries=[];
   let showMark=true;
-  const applyTouchMarkers=()=>candleSeries.setMarkers(showMark?markers:[]);
+  const applyTouchMarkers=()=>candleSeries.setMarkers(showMark&&viewTF==='1h'?markers:[]);
   function calcMarker(i){
     if(!ind.bU[i]||!ind.b4U[i])return;
     const c=allData[i];
@@ -692,6 +781,7 @@ try {
   function drawSMC(){
     if(!sctx)return;
     sctx.clearRect(0,0,smCanvas.width,smCanvas.height);
+    if(viewTF!=='1h')return;                       // SMC·오버레이는 1h에서만 (2단계서 확장)
     if(!smc.swing&&!smc.bos&&!smc.ob&&!smc.fvg&&!smc.vrvp&&!smc.sess)return;
     const ts=chart.timeScale(), X=t=>ts.timeToCoordinate(t), Y=p=>candleSeries.priceToCoordinate(p);
     const vr=ts.getVisibleRange();
@@ -800,15 +890,15 @@ try {
 
   // --- 보조지표 표시 토글 ---
   const tg={
-    ma:  {on:true,fn:v=>[sma20,sma60,sma120].forEach(s=>s.applyOptions({visible:v}))},
-    bb:  {on:true,fn:v=>[bbUp,bbLow].forEach(s=>s.applyOptions({visible:v}))},
-    bb4: {on:true,fn:v=>[bb4Up,bb4Low].forEach(s=>s.applyOptions({visible:v}))},
+    ma:  {on:false,fn:v=>[sma20,sma60,sma120].forEach(s=>s.applyOptions({visible:v}))},
+    bb:  {on:false,fn:v=>[bbUp,bbLow].forEach(s=>s.applyOptions({visible:v}))},
+    bb4: {on:false,fn:v=>[bb4Up,bb4Low].forEach(s=>s.applyOptions({visible:v}))},
     bb3: {on:false,fn:v=>[bb3Up,bb3Low].forEach(s=>s.applyOptions({visible:v}))},
-    open:{on:true,fn:v=>[dOpen,wOpen].forEach(s=>s.applyOptions({visible:v}))},
-    mark:{on:true,fn:v=>{showMark=v;applyTouchMarkers();}},
-    rsi: {on:true,fn:v=>{document.getElementById('rsi-wrap').style.display=v?'':'none';}},
-    disp:{on:true,fn:v=>{document.getElementById('disp-wrap').style.display=v?'':'none';}},
-    div: {on:true,fn:v=>{divSeries.forEach(s=>s.applyOptions({visible:v}));rsiLine.setMarkers(v?rsiMarkers:[]);}},
+    open:{on:false,fn:v=>[dOpen,wOpen].forEach(s=>s.applyOptions({visible:v}))},
+    mark:{on:false,fn:v=>{showMark=v;applyTouchMarkers();}},
+    rsi: {on:false,fn:v=>{document.getElementById('rsi-wrap').style.display=v?'':'none';}},
+    disp:{on:false,fn:v=>{document.getElementById('disp-wrap').style.display=v?'':'none';}},
+    div: {on:false,fn:v=>{divSeries.forEach(s=>s.applyOptions({visible:v}));rsiLine.setMarkers(v?rsiMarkers:[]);}},
     smcSwing:{on:false,fn:v=>{smc.swing=v;drawSMC();}},
     smcBos:  {on:false,fn:v=>{smc.bos=v;drawSMC();}},
     smcOb:   {on:false,fn:v=>{smc.ob=v;drawSMC();}},
@@ -822,22 +912,56 @@ try {
   // 워밍업 200봉 이후 ~ 끝 700봉 전까지 무작위 시작 (시드 기반, 전 구간)
   let idx=200+Math.floor(rng()*(TOTAL-200-ROOM));
   const START=idx;
-  const from=Math.max(0,idx-HIST);              // 초기 표시 히스토리 창
-  const winLen=idx-from;
-  candleSeries.setData(allData.slice(from,idx));
-  const initS=(s,a)=>s.setData(a.slice(from,idx).filter(Boolean));
-  initS(sma20,ind.s20);initS(sma60,ind.s60);initS(sma120,ind.s120);
-  initS(bbUp,ind.bU);initS(bbLow,ind.bL);initS(dOpen,ind.dOp);initS(wOpen,ind.wOp);
-  initS(bb4Up,ind.b4U);initS(bb4Low,ind.b4L);
-  initS(bb3Up,ind.b3U);initS(bb3Low,ind.b3L);
-  initS(rsiLine,ind.rsi);initS(rsiOver,ind.rsi);initS(rsiUnder,ind.rsi);
-  initS(disp20,ind.dp20);
-  for(let i=from;i<idx;i++)calcMarker(i);
-  applyTouchMarkers();
-  divCur=Math.max(PW,from);                      // 다이버전스 스캔도 창 시작부터
+
+  // --- 보는 TF 렌더 (base=1h 고정, view만 전환) ---
+  function render1H(){
+    const f=Math.max(0,idx-HIST), wl=idx-f;
+    candleSeries.setData(allData.slice(f,idx));
+    const setS=(s,a)=>s.setData(a.slice(f,idx).filter(Boolean));
+    setS(sma20,ind.s20);setS(sma60,ind.s60);setS(sma120,ind.s120);
+    setS(bbUp,ind.bU);setS(bbLow,ind.bL);setS(dOpen,ind.dOp);setS(wOpen,ind.wOp);
+    setS(bb4Up,ind.b4U);setS(bb4Low,ind.b4L);setS(bb3Up,ind.b3U);setS(bb3Low,ind.b3L);
+    setS(rsiLine,ind.rsi);setS(rsiOver,ind.rsi);setS(rsiUnder,ind.rsi);setS(disp20,ind.dp20);
+    applyTouchMarkers();
+    divSeries.forEach(s=>s.applyOptions({visible:tg.div.on}));
+    rsiLine.setMarkers(tg.div.on?rsiMarkers:[]);
+    chart.timeScale().setVisibleLogicalRange({from:wl-VISIBLE,to:wl});
+    drawSMC();
+  }
+  function renderTF(tf){
+    const bars=HIGHER[tf]?resampleHigher(idx,tf):sliceLower(tf);
+    if(!bars.length)return;
+    candleSeries.setData(bars);
+    const I=basicInd(bars);
+    const mp=a=>{const o=[];for(let i=0;i<bars.length;i++)if(a[i]!=null)o.push({time:bars[i].time,value:a[i]});return o;};
+    sma20.setData(mp(I.s20));sma60.setData(mp(I.s60));sma120.setData(mp(I.s120));
+    bbUp.setData(mp(I.bu));bbLow.setData(mp(I.bl));disp20.setData(mp(I.dp));
+    rsiLine.setData(mp(I.rsi));rsiOver.setData(mp(I.rsi));rsiUnder.setData(mp(I.rsi));
+    [bb4Up,bb4Low,bb3Up,bb3Low,dOpen,wOpen].forEach(s=>s.setData([]));   // 고급요소는 1h에서만
+    candleSeries.setMarkers([]); divSeries.forEach(s=>s.applyOptions({visible:false})); rsiLine.setMarkers([]);
+    const wl=bars.length;
+    chart.timeScale().setVisibleLogicalRange({from:Math.max(0,wl-VISIBLE),to:wl});
+    drawSMC();                                                          // non-1h → 캔버스 클리어
+  }
+  function drawView(){ viewTF==='1h'?render1H():renderTF(viewTF); }
+  function updateTFLabel(){const el=document.getElementById('tfLabel');if(el)el.textContent=TF_LABEL[viewTF];
+    document.querySelectorAll('.tf-seg').forEach(b=>b.classList.toggle('on',b.dataset.tf===viewTF));}
+  function tfBusy(b){const el=document.getElementById('tfBusy');if(el)el.style.display=b?'flex':'none';}
+  async function showView(tf){
+    if(!TF_DUR[tf]||tf===viewTF)return;
+    if(tf!=='1h'&&!HIGHER[tf]&&!subData[tf]){ tfBusy(true);
+      try{await loadSub(tf);}catch(e){toast('데이터 로드 실패',true);tfBusy(false);return;} tfBusy(false);}
+    viewTF=tf; updateTFLabel(); drawView();
+  }
+  function stepTF(dir){const i=TF_LIST.indexOf(viewTF),n=i+dir;if(n<0||n>=TF_LIST.length)return;showView(TF_LIST[n]);}
+
+  // 워밍업: 1h 마커·다이버전스 누적 (보는 TF와 무관하게 항상)
+  const _wf=Math.max(0,idx-HIST);
+  for(let i=_wf;i<idx;i++)calcMarker(i);
+  divCur=Math.max(PW,_wf);
   processDiv(idx-1);
   revealSMC(idx-1);
-  chart.timeScale().setVisibleLogicalRange({from:winLen-VISIBLE,to:winLen});
+  drawView();                                    // 초기 = 1h
   requestAnimationFrame(()=>{sizeSMC();drawSMC();});
 
   // ===================== 5. 트레이딩 엔진 =====================
@@ -915,19 +1039,24 @@ try {
     if(st.busted){toast('파산 — 새 게임을 시작하세요',true);return;}
     if(idx>=TOTAL){toast('데이터 끝');return;}
     const c=allData[idx];
-    candleSeries.update(c);
-    fillPending(c.open);                  // 예약 주문을 새 봉 시가에 체결
-    const up=(s,a)=>{if(a[idx])s.update(a[idx]);};
-    up(sma20,ind.s20);up(sma60,ind.s60);up(sma120,ind.s120);
-    up(bbUp,ind.bU);up(bbLow,ind.bL);up(dOpen,ind.dOp);up(wOpen,ind.wOp);
-    up(bb4Up,ind.b4U);up(bb4Low,ind.b4L);
-    up(bb3Up,ind.b3U);up(bb3Low,ind.b3L);
-    up(rsiLine,ind.rsi);up(rsiOver,ind.rsi);up(rsiUnder,ind.rsi);
-    up(disp20,ind.dp20);
-    calcMarker(idx);applyTouchMarkers();
-    chart.timeScale().scrollToRealTime();
+    fillPending(c.open);                  // 예약 주문을 새 봉 시가에 체결 (항상 1h 기준)
+    calcMarker(idx);                      // 1h 마커 누적 (보는 TF와 무관)
+    if(viewTF==='1h'){
+      candleSeries.update(c);
+      const up=(s,a)=>{if(a[idx])s.update(a[idx]);};
+      up(sma20,ind.s20);up(sma60,ind.s60);up(sma120,ind.s120);
+      up(bbUp,ind.bU);up(bbLow,ind.bL);up(dOpen,ind.dOp);up(wOpen,ind.wOp);
+      up(bb4Up,ind.b4U);up(bb4Low,ind.b4L);
+      up(bb3Up,ind.b3U);up(bb3Low,ind.b3L);
+      up(rsiLine,ind.rsi);up(rsiOver,ind.rsi);up(rsiUnder,ind.rsi);
+      up(disp20,ind.dp20);
+      applyTouchMarkers();
+      chart.timeScale().scrollToRealTime();
+    }
     checkLiq(c);
-    idx++;processDiv(idx-1);revealSMC(idx-1);drawSMC();render();setMine();
+    idx++;processDiv(idx-1);revealSMC(idx-1);
+    if(viewTF==='1h')drawSMC(); else drawView();   // 보는 TF면 뷰 재구성(현재 T까지)
+    render();setMine();
     if(idx-START>=50&&!st.submitted)submitScore('50턴');
   }
 
@@ -990,6 +1119,14 @@ try {
   document.getElementById('btnLong').onclick=()=>openPos(1);
   document.getElementById('btnShort').onclick=()=>openPos(-1);
   document.getElementById('btnNext').onclick=nextBar;
+  // 타임프레임 전환 바인딩
+  document.getElementById('tfPrev').onclick=()=>stepTF(-1);
+  document.getElementById('tfNext').onclick=()=>stepTF(1);
+  document.querySelectorAll('.tf-seg').forEach(b=>b.onclick=()=>showView(b.dataset.tf));
+  (function(){const el=document.getElementById('chart-container');let x0=null;
+    el.addEventListener('touchstart',e=>{x0=e.touches[0].clientX;},{passive:true});
+    el.addEventListener('touchend',e=>{if(x0==null)return;const dx=e.changedTouches[0].clientX-x0;x0=null;
+      if(Math.abs(dx)>60)stepTF(dx<0?1:-1);},{passive:true});})();
   document.getElementById('btnCloseAll').onclick=closeAll;
   document.getElementById('btnNew').onclick=()=>{
     const b=Math.round(+document.getElementById('balInput').value);
@@ -1042,6 +1179,9 @@ try {
   document.getElementById('balInput').value=INIT;
   setLot(0.01);
   render();
+  // 모든 보조지표 초기 상태 적용 (기본 전부 꺼짐)
+  document.querySelectorAll('#tgls .tgl').forEach(b=>{const t=tg[b.dataset.tg];if(t)b.classList.toggle('on',t.on);});
+  Object.keys(tg).forEach(k=>tg[k].fn(tg[k].on));
 
   // ===================== 순위표 로직 =====================
   const nickEl=document.getElementById('nickInput');
