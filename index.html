@@ -145,6 +145,13 @@
   .lb-meta{color:var(--mut);font-size:10px;font-family:var(--mono);flex:none}
   .lb-empty{color:var(--mut);font-size:12px;text-align:center;padding:14px 0}
 
+  #btnLive{background:#1f6feb;color:#fff;border:none;border-radius:7px;padding:8px 12px;font-size:12.5px;font-weight:600;white-space:nowrap}
+  #liveBanner{display:none;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap;
+    background:rgba(31,111,235,.14);border:1px solid rgba(31,111,235,.4);color:#9fc1ff;
+    border-radius:8px;padding:7px 10px;margin:6px 0;font-size:12px}
+  #liveBanner.on{display:flex}
+  #btnExitLive{background:transparent;border:1px solid rgba(159,193,255,.5);color:#9fc1ff;
+    border-radius:6px;padding:3px 8px;font-size:11px}
   /* 매매규칙 팁 카드 (접이식) */
   .tip-card{padding:0;overflow:hidden}
   .tip-card>summary{list-style:none;cursor:pointer;padding:12px 14px;font-size:12.5px;
@@ -162,6 +169,14 @@
   .keys b{color:var(--txt)}
   .tgls{display:flex;flex-wrap:wrap;gap:6px}
   #smc-overlay{position:absolute;left:0;top:0;z-index:3;pointer-events:none}
+  #draw-overlay{position:absolute;left:0;top:0;z-index:4;pointer-events:none}
+  #draw-tools{position:absolute;left:8px;top:8px;z-index:5;display:none;gap:3px;
+    background:rgba(20,22,28,.82);border:1px solid var(--line);border-radius:8px;padding:3px}
+  #draw-tools button{width:30px;height:30px;border:none;border-radius:6px;background:transparent;
+    color:#cfd4dd;font-size:15px;line-height:1;padding:0;cursor:pointer}
+  #draw-tools button:hover{background:rgba(255,255,255,.08)}
+  #draw-tools button.on{background:var(--acc);color:#1a1a1a}
+  @media(min-width:821px){ #draw-tools{display:flex} }
   .smc-credit{font-size:9.5px;color:var(--mut);margin-top:7px;opacity:.7}
   .tgl{background:var(--panel2);color:var(--mut);border:1px solid var(--line);
     padding:6px 9px;border-radius:7px;font-size:11.5px;font-weight:500}
@@ -230,7 +245,15 @@
       <span class="tf-now" id="tfLabel">1시간</span>
       <button class="tf-arrow" id="tfNext" title="큰 TF">▶</button>
     </div>
-    <div id="chart-container"><canvas id="smc-overlay"></canvas>
+    <div id="chart-container"><canvas id="smc-overlay"></canvas><canvas id="draw-overlay"></canvas>
+      <div id="draw-tools">
+        <button data-tool="none" class="on" title="커서(차트 이동)">🖱</button>
+        <button data-tool="trend" title="추세선">╱</button>
+        <button data-tool="box" title="박스">▭</button>
+        <button data-tool="hline" title="수평선">━</button>
+        <button data-tool="erase" title="지우개(클릭 삭제)">⌫</button>
+        <button data-tool="clear" title="전체 삭제">🗑</button>
+      </div>
       <div id="tfBusy" class="tf-busy">데이터 불러오는 중…</div>
     </div>
     <div class="sub-wrap" id="rsi-wrap"><span class="sub-tag">RSI 14</span><div id="rsi-container"></div></div>
@@ -380,8 +403,10 @@
         <span class="ng-lbl">초기 $</span>
         <input id="balInput" type="number" min="100" step="1000" value="10000">
         <button id="btnNew">↻ 새 게임</button>
+        <button id="btnLive" title="최근 7일 실데이터를 받아 복습">📡 최근 7일</button>
       </span>
     </div>
+    <div id="liveBanner">📡 최근 7일 복습 모드 · <span id="liveAt"></span> · 순위표 미기록 <button id="btnExitLive">일반 모드로</button></div>
   </div>
 </div>
 
@@ -495,6 +520,7 @@ try {
       allCharts.forEach((dst,j)=>{if(i!==j)dst.timeScale().setVisibleLogicalRange(r);});
       syncing=false;
       if(typeof drawSMC==='function')drawSMC();
+      if(typeof drawTools==='function')drawTools();
     });
   });
 
@@ -507,7 +533,13 @@ try {
     throw new Error('XAU_DATA missing');
   }
   let allData;
-  {
+  let LIVE=false, liveRaw=null;
+  if(params.get('live')==='1'){ try{liveRaw=JSON.parse(sessionStorage.getItem('live7d'));}catch(e){} }
+  if(liveRaw&&liveRaw.h1&&liveRaw.h1.length>150){
+    LIVE=true;
+    allData=liveRaw.h1.map(b=>({time:b.t,open:b.o,high:b.h,low:b.l,close:b.c}));
+  } else {
+    LIVE=false; liveRaw=null;
     const seg=window.XAU_DATA.split(';');
     const base=parseInt(seg[0],10);
     let t=base;
@@ -572,6 +604,17 @@ try {
       else{ag=(ag*13+(d>0?d:0))/14;al=(al*13+(d<0?-d:0))/14;rsi[i]=100-100/(1+ag/(al||1e-9));}}
     return {s20,s60,s120,bu,bl,dp,rsi};}
   function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
+  function resampleSub(m5,dur){const map=new Map();
+    for(const b of m5){const bs=Math.floor(b.time/dur)*dur;const x=map.get(bs);
+      if(!x)map.set(bs,{time:bs,open:b.open,high:b.high,low:b.low,close:b.close,vol:b.vol});
+      else{if(b.high>x.high)x.high=b.high;if(b.low<x.low)x.low=b.low;x.close=b.close;x.vol+=b.vol;}}
+    return [...map.values()].sort((a,b)=>a.time-b.time);}
+  // 라이브(최근7일): 5분 시세에서 하위 TF 전부 생성 (파일 불필요)
+  if(LIVE&&liveRaw&&liveRaw.m5){
+    const m5=liveRaw.m5.map(b=>({time:b.t,open:b.o,high:b.h,low:b.l,close:b.c,vol:b.v||0}));
+    subData.m5=m5; subData.m10=resampleM10(m5);
+    subData.m15=resampleSub(m5,900); subData.m30=resampleSub(m5,1800);
+  }
   async function loadSub(tf){
     if(tf==='m10'){if(!subData.m5)await loadSub('m5');subData.m10=resampleM10(subData.m5);return;}
     if(subData[tf])return;
@@ -788,11 +831,15 @@ try {
   // 오버레이 캔버스
   const smCanvas=document.getElementById('smc-overlay');
   const sctx=smCanvas.getContext('2d');
+  const dCanvas=document.getElementById('draw-overlay');
+  const dctx=dCanvas.getContext('2d');
   function sizeSMC(){
     const cont=document.getElementById('chart-container');
     const w=cont.clientWidth,h=cont.clientHeight,dpr=window.devicePixelRatio||1;
     smCanvas.width=w*dpr; smCanvas.height=h*dpr; smCanvas.style.width=w+'px'; smCanvas.style.height=h+'px';
     sctx.setTransform(dpr,0,0,dpr,0,0);
+    dCanvas.width=w*dpr; dCanvas.height=h*dpr; dCanvas.style.width=w+'px'; dCanvas.style.height=h+'px';
+    dctx.setTransform(dpr,0,0,dpr,0,0);
   }
   function drawSMC(){
     if(!sctx)return;
@@ -902,7 +949,85 @@ try {
       }
     }
   }
-  new ResizeObserver(()=>{sizeSMC();drawSMC();}).observe(document.getElementById('chart-container'));
+  new ResizeObserver(()=>{sizeSMC();drawSMC();drawTools();}).observe(document.getElementById('chart-container'));
+
+  // ===================== PC 드로잉 도구 (추세선·박스·수평선) =====================
+  let tool='none';                       // none|trend|box|hline|erase
+  const drawings=[];                     // {type,tf,t1,p1,t2,p2,color}
+  let draft=null;                        // 드래그 중 미리보기
+  const TR_COL='#2962ff', BX_COL='rgba(120,140,170,.9)', HL_COL='#e0a23a';
+  const TX=t=>chart.timeScale().timeToCoordinate(t);
+  const TP=p=>candleSeries.priceToCoordinate(p);
+  const pxTime=x=>chart.timeScale().coordinateToTime(x);
+  const pxPrice=y=>candleSeries.coordinateToPrice(y);
+  function drawTools(){
+    if(!dctx)return;
+    dctx.clearRect(0,0,dCanvas.width,dCanvas.height);
+    const W=dCanvas.clientWidth;
+    const seg=(x1,y1,x2,y2,col,dash)=>{dctx.strokeStyle=col;dctx.lineWidth=1.5;dctx.setLineDash(dash||[]);
+      dctx.beginPath();dctx.moveTo(x1,y1);dctx.lineTo(x2,y2);dctx.stroke();dctx.setLineDash([]);};
+    for(const d of drawings){
+      if(d.tf!==viewTF)continue;
+      if(d.type==='hline'){const y=TP(d.p1);if(y==null)continue;
+        seg(0,y,W,y,d.color);
+        dctx.fillStyle=d.color;dctx.font='10px sans-serif';dctx.textAlign='left';dctx.textBaseline='bottom';
+        dctx.fillText(d.p1.toFixed(2),3,y-2);
+      }else{const x1=TX(d.t1),y1=TP(d.p1),x2=TX(d.t2),y2=TP(d.p2);
+        if([x1,y1,x2,y2].some(v=>v==null))continue;
+        if(d.type==='trend')seg(x1,y1,x2,y2,d.color);
+        else{dctx.strokeStyle=d.color;dctx.lineWidth=1.2;dctx.fillStyle='rgba(120,140,170,.10)';
+          const L=Math.min(x1,x2),T=Math.min(y1,y2),Wd=Math.abs(x2-x1),H=Math.abs(y2-y1);
+          dctx.fillRect(L,T,Wd,H);dctx.strokeRect(L+.5,T+.5,Wd-1,H-1);}
+      }
+    }
+    if(draft){const{x1,y1,x2,y2,type}=draft;
+      if(type==='trend')seg(x1,y1,x2,y2,TR_COL,[4,3]);
+      else if(type==='box'){dctx.strokeStyle=BX_COL;dctx.setLineDash([4,3]);
+        dctx.strokeRect(Math.min(x1,x2)+.5,Math.min(y1,y2)+.5,Math.abs(x2-x1)-1,Math.abs(y2-y1)-1);dctx.setLineDash([]);}
+    }
+  }
+  function setTool(t){
+    if(t==='clear'){drawings.length=0;drawTools();
+      document.querySelectorAll('#draw-tools button').forEach(b=>b.classList.toggle('on',b.dataset.tool==='none'));
+      tool='none';dCanvas.style.pointerEvents='none';return;}
+    tool=t;
+    dCanvas.style.pointerEvents=(t==='none')?'none':'auto';
+    dCanvas.style.cursor=(t==='none')?'default':(t==='erase'?'pointer':'crosshair');
+    document.querySelectorAll('#draw-tools button').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
+  }
+  function distSeg(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,l2=dx*dx+dy*dy;
+    let tt=l2?((px-x1)*dx+(py-y1)*dy)/l2:0;tt=Math.max(0,Math.min(1,tt));
+    return Math.hypot(px-(x1+tt*dx),py-(y1+tt*dy));}
+  function eraseAt(px,py){
+    for(let i=drawings.length-1;i>=0;i--){const d=drawings[i];if(d.tf!==viewTF)continue;
+      let hit=false;
+      if(d.type==='hline'){const y=TP(d.p1);hit=y!=null&&Math.abs(py-y)<6;}
+      else{const x1=TX(d.t1),y1=TP(d.p1),x2=TX(d.t2),y2=TP(d.p2);
+        if([x1,y1,x2,y2].some(v=>v==null))continue;
+        if(d.type==='trend')hit=distSeg(px,py,x1,y1,x2,y2)<6;
+        else{const L=Math.min(x1,x2),R=Math.max(x1,x2),T=Math.min(y1,y2),B=Math.max(y1,y2);
+          hit=(px>=L-5&&px<=R+5&&py>=T-5&&py<=B+5)&&!(px>L+5&&px<R-5&&py>T+5&&py<B-5);}}
+      if(hit){drawings.splice(i,1);drawTools();return;}
+    }
+  }
+  (function bindDraw(){
+    const xy=e=>{const r=dCanvas.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top];};
+    dCanvas.addEventListener('mousedown',e=>{
+      if(tool==='none')return; const[x,y]=xy(e);
+      if(tool==='erase'){eraseAt(x,y);return;}
+      if(tool==='hline'){const p=pxPrice(y);if(p!=null)drawings.push({type:'hline',tf:viewTF,p1:p,color:HL_COL});drawTools();return;}
+      draft={x1:x,y1:y,x2:x,y2:y,type:tool};
+    });
+    dCanvas.addEventListener('mousemove',e=>{if(!draft)return;const[x,y]=xy(e);draft.x2=x;draft.y2=y;drawTools();});
+    function finish(e){if(!draft)return;const[x,y]=xy(e);
+      const t1=pxTime(draft.x1),p1=pxPrice(draft.y1),t2=pxTime(x),p2=pxPrice(y);
+      if(t1!=null&&p1!=null&&t2!=null&&p2!=null&&(Math.abs(x-draft.x1)>3||Math.abs(y-draft.y1)>3))
+        drawings.push({type:draft.type,tf:viewTF,t1,p1,t2,p2,color:draft.type==='trend'?TR_COL:BX_COL});
+      draft=null;drawTools();}
+    dCanvas.addEventListener('mouseup',finish);
+    dCanvas.addEventListener('mouseleave',()=>{if(draft){draft=null;drawTools();}});
+    document.querySelectorAll('#draw-tools button').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+  })();
 
   // --- 보조지표 표시 토글 ---
   const tg={
@@ -926,7 +1051,10 @@ try {
   // ===================== 5. 초기 표시 =====================
   const VISIBLE=150, HIST=520, ROOM=700;
   // 워밍업 200봉 이후 ~ 끝 700봉 전까지 무작위 시작 (시드 기반, 전 구간)
-  let idx=200+Math.floor(rng()*(TOTAL-200-ROOM));
+  let idx;
+  if(LIVE){ const endT=allData[TOTAL-1].time; let s=allData.findIndex(b=>b.time>=endT-7*86400);
+    if(s<0)s=0; idx=Math.max(60,Math.min(s,TOTAL-2)); }
+  else idx=200+Math.floor(rng()*(TOTAL-200-ROOM));
   const START=idx;
 
   // --- 보는 TF 렌더 (base=1h 고정, view만 전환) ---
@@ -960,7 +1088,7 @@ try {
     chart.timeScale().setVisibleLogicalRange({from:Math.max(0,wl-VISIBLE),to:wl});
     drawSMC();                                                          // non-1h → 캔버스 클리어
   }
-  function drawView(){ viewTF==='1h'?render1H():renderTF(viewTF); }
+  function drawView(){ viewTF==='1h'?render1H():renderTF(viewTF); if(typeof drawTools==='function')drawTools(); }
   function updateTFLabel(){const el=document.getElementById('tfLabel');if(el)el.textContent=TF_LABEL[viewTF];
     document.querySelectorAll('.tf-seg').forEach(b=>b.classList.toggle('on',b.dataset.tf===viewTF));}
   function tfBusy(b){const el=document.getElementById('tfBusy');if(el)el.style.display=b?'flex':'none';}
@@ -1048,7 +1176,7 @@ try {
       st.balance=Math.max(0,st.balance);st.positions=[];
       st.busted=st.balance<=0;
       toast('⚠ 마진콜 — 전체 강제청산',true);
-      if(st.busted)submitScore('파산');
+      if(st.busted&&!LIVE)submitScore('파산');
     }
   }
 
@@ -1075,7 +1203,7 @@ try {
     idx++;processDiv(idx-1);revealSMC(idx-1);
     if(viewTF==='1h')drawSMC(); else drawView();   // 보는 TF면 뷰 재구성(현재 T까지)
     render();setMine();
-    if(idx-START>=50&&!st.submitted)submitScore('50턴');
+    if(idx-START>=50&&!st.submitted&&!LIVE)submitScore('50턴');
   }
 
   // ===================== 7. 렌더 =====================
@@ -1145,8 +1273,44 @@ try {
   document.getElementById('btnNew').onclick=()=>{
     const b=Math.round(+document.getElementById('balInput').value);
     const bal=(b>=100&&b<=1e9)?b:10000;
+    if(LIVE){ location.reload(); return; }   // 복습 모드: 같은 7일 다시
     location.search='?seed='+(Math.floor(Math.random()*4.29e9)>>>0)
       +'&bal='+bal+'&em='+entryMode+'&sp='+(SPREAD>0?1:0);};
+
+  // 최근 7일 복습 모드
+  const TD_KEY='8c577309539e4f60867b725ac8a24104';
+  async function fetchLive(){
+    const btn=document.getElementById('btnLive');
+    btn.disabled=true; const old=btn.textContent; btn.textContent='받는 중…';
+    toast('최근 7일 데이터 받는 중…');
+    try{
+      const base='https://api.twelvedata.com/time_series?apikey='+TD_KEY+'&symbol=XAU/USD&timezone=UTC&order=ASC&format=JSON';
+      const [r1,r5]=await Promise.all([
+        fetch(base+'&interval=1h&outputsize=800').then(r=>r.json()),
+        fetch(base+'&interval=5min&outputsize=2100').then(r=>r.json())
+      ]);
+      if(r1.status==='error')throw new Error(r1.message||'1h 오류');
+      if(r5.status==='error')throw new Error(r5.message||'5m 오류');
+      const conv=v=>({t:Math.floor(new Date(v.datetime.replace(' ','T')+'Z').getTime()/1000),
+        o:+v.open,h:+v.high,l:+v.low,c:+v.close,v:+(v.volume||0)});
+      const h1=(r1.values||[]).map(conv).filter(b=>b.t&&isFinite(b.o));
+      const m5=(r5.values||[]).map(conv).filter(b=>b.t&&isFinite(b.o));
+      if(h1.length<150)throw new Error('데이터가 부족해요('+h1.length+'봉)');
+      sessionStorage.setItem('live7d',JSON.stringify({h1,m5,fetchedAt:new Date().toISOString()}));
+      const u=new URL(location.href); u.searchParams.set('live','1'); u.searchParams.delete('seed');
+      location.href=u.toString();
+    }catch(e){ btn.disabled=false; btn.textContent=old; toast('로드 실패: '+(e.message||e),true); }
+  }
+  document.getElementById('btnLive').onclick=fetchLive;
+  document.getElementById('btnExitLive').onclick=()=>{
+    const u=new URL(location.href); u.searchParams.delete('live'); location.href=u.toString();};
+  if(LIVE){
+    document.getElementById('liveBanner').classList.add('on');
+    document.getElementById('btnLive').textContent='📡 갱신';
+    try{const at=new Date(liveRaw.fetchedAt);
+      document.getElementById('liveAt').textContent=at.toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})+' 기준';}catch(e){}
+    document.getElementById('seedTxt').textContent='LIVE';
+  }
 
   // 진입가 규칙 토글
   const entrySeg=document.getElementById('entrySeg');
@@ -1234,6 +1398,7 @@ try {
   function esc(s){return String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
 
   async function submitScore(reason){
+    if(LIVE){toast('복습 모드는 순위표에 기록되지 않아요');return;}
     if(st.submitted)return;
     const nick=(nickEl.value||'').trim();
     if(!nick){toast('별명을 입력하고 제출하세요',true); nickEl.focus(); return;}
