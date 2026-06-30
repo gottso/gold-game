@@ -1293,7 +1293,13 @@ try {
       if(r5.status==='error')throw new Error(r5.message||'5m 오류');
       const conv=v=>({t:Math.floor(new Date(v.datetime.replace(' ','T')+'Z').getTime()/1000),
         o:+v.open,h:+v.high,l:+v.low,c:+v.close,v:+(v.volume||0)});
-      const live=b=>b.t&&isFinite(b.o)&&b.h>b.l;   // 비거래(평평한) 봉 제거 → 주말 갭 붙임
+      // 골드 비거래 구간 제외(KST): 토요일 06:00 이후 ~ 월요일 07:00 이전
+      const tradable=b=>{const d=new Date((b.t+9*3600)*1000);const wd=d.getUTCDay(),hh=d.getUTCHours();
+        if(wd===6)return hh<6;            // 토요일은 06시 전까지만
+        if(wd===0)return false;           // 일요일 전체 제외
+        if(wd===1)return hh>=7;           // 월요일은 07시부터
+        return true;};
+      const live=b=>b.t&&isFinite(b.o)&&b.h>=b.l&&tradable(b);
       const h1=(r1.values||[]).map(conv).filter(live);
       const m5=(r5.values||[]).map(conv).filter(live);
       if(h1.length<150)throw new Error('데이터가 부족해요('+h1.length+'봉)');
