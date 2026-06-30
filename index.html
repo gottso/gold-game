@@ -534,10 +534,14 @@ try {
   }
   let allData;
   let LIVE=false, liveRaw=null;
+  // 골드 비거래 구간 제외(KST): 금야간 거래, 토 06시~일 종일~월 07시 전 제외
+  function tradable(t){const d=new Date((t+9*3600)*1000);const wd=d.getUTCDay(),hh=d.getUTCHours();
+    if(wd===6)return hh<6; if(wd===0)return false; if(wd===1)return hh>=7; return true;}
   if(params.get('live')==='1'){ try{liveRaw=JSON.parse(sessionStorage.getItem('live7d'));}catch(e){} }
   if(liveRaw&&liveRaw.h1&&liveRaw.h1.length>150){
     LIVE=true;
-    allData=liveRaw.h1.map(b=>({time:b.t,open:b.o,high:b.h,low:b.l,close:b.c}));
+    allData=liveRaw.h1.filter(b=>b.h>b.l&&tradable(b.t))
+      .map(b=>({time:b.t,open:b.o,high:b.h,low:b.l,close:b.c}));
   } else {
     LIVE=false; liveRaw=null;
     const seg=window.XAU_DATA.split(';');
@@ -611,7 +615,8 @@ try {
     return [...map.values()].sort((a,b)=>a.time-b.time);}
   // 라이브(최근7일): 5분 시세에서 하위 TF 전부 생성 (파일 불필요)
   if(LIVE&&liveRaw&&liveRaw.m5){
-    const m5=liveRaw.m5.map(b=>({time:b.t,open:b.o,high:b.h,low:b.l,close:b.c,vol:b.v||0}));
+    const m5=liveRaw.m5.filter(b=>b.h>b.l&&tradable(b.t))
+      .map(b=>({time:b.t,open:b.o,high:b.h,low:b.l,close:b.c,vol:b.v||0}));
     subData.m5=m5; subData.m10=resampleM10(m5);
     subData.m15=resampleSub(m5,900); subData.m30=resampleSub(m5,1800);
   }
@@ -1293,13 +1298,7 @@ try {
       if(r5.status==='error')throw new Error(r5.message||'5m 오류');
       const conv=v=>({t:Math.floor(new Date(v.datetime.replace(' ','T')+'Z').getTime()/1000),
         o:+v.open,h:+v.high,l:+v.low,c:+v.close,v:+(v.volume||0)});
-      // 골드 비거래 구간 제외(KST): 토요일 06:00 이후 ~ 월요일 07:00 이전
-      const tradable=b=>{const d=new Date((b.t+9*3600)*1000);const wd=d.getUTCDay(),hh=d.getUTCHours();
-        if(wd===6)return hh<6;            // 토요일은 06시 전까지만
-        if(wd===0)return false;           // 일요일 전체 제외
-        if(wd===1)return hh>=7;           // 월요일은 07시부터
-        return true;};
-      const live=b=>b.t&&isFinite(b.o)&&b.h>=b.l&&tradable(b);
+      const live=b=>b.t&&isFinite(b.o)&&b.h>b.l&&tradable(b.t);   // 주말 비거래 제외
       const h1=(r1.values||[]).map(conv).filter(live);
       const m5=(r5.values||[]).map(conv).filter(live);
       if(h1.length<150)throw new Error('데이터가 부족해요('+h1.length+'봉)');
