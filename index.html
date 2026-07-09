@@ -347,6 +347,7 @@
         <button class="tgl" data-tg="smcFvg">FVG</button>
         <button class="tgl" data-tg="smcZone">매물대</button>
         <button class="tgl" data-tg="smcPat">패턴(W/M)</button>
+        <button class="tgl" data-tg="smcSig">전략신호</button>
         <button class="tgl" data-tg="vrvp">VRVP(매물대)</button>
         <button class="tgl" data-tg="sess">시가박스(세션)</button>
       </div>
@@ -743,7 +744,7 @@ try {
 
   // ===================== 4-b. SMC (스윙 구조 / BOS·CHoCH) — © LuxAlgo, CC BY-NC-SA 4.0 =====================
   const SW_LEN=10, BULL=1, BEAR=-1, SMC_GREEN='#089981', SMC_RED='#F23645';
-  const smc={swing:false,bos:false,ob:false,fvg:false,vrvp:false,sess:false,zone:false,pat:false};   // 기본 전부 꺼짐
+  const smc={swing:false,bos:false,ob:false,fvg:false,vrvp:false,sess:false,zone:false,pat:false,sig:false};   // 기본 전부 꺼짐
   const OB_BULL_F='rgba(49,121,245,.16)', OB_BULL_B='rgba(49,121,245,.55)';
   const OB_BEAR_F='rgba(242,54,69,.14)',  OB_BEAR_B='rgba(242,54,69,.55)';
   const FVG_BULL='rgba(0,170,95,.14)',    FVG_BEAR='rgba(242,54,69,.12)';
@@ -751,12 +752,16 @@ try {
   const ZONE_LEN=10, ZONE_MERGE=0.5, ZONE_EXT=30, ZONE_MAXDRAW=25;   // Pine: zoneLen/mergeKTR/zoneExtend/maxDrawZones
   const PAT_LEN=5, PAT_TOL=0.5, PAT_MAXDRAW=8;                        // Pine: patLen/tolKTR/maxPats
   const PAT_COL='#d500f9', PAT_NECK='rgba(150,150,150,.85)', PAT_MM_F='rgba(213,0,249,.10)', PAT_MM_B='rgba(213,0,249,.45)';
+  const SIG_BUY='#00c853', SIG_SELL='#e0524a';
+  // 전략(김직선) 파라미터
+  const SIG_BUF=0.5, SIG_MAXPULL=2, SIG_LOCK=10, SIG_MINRR=1.0, SIG_RRMULT=2.0, SIG_MAXKTR=5.5, SIG_PIV=5, SIG_MAXDRAW=6;
+  const SIG_L='#26a96b', SIG_S='#e0524a', SIG_STOP='rgba(224,82,74,.9)', SIG_TGT='rgba(38,169,107,.9)', SIG_KTR='rgba(240,160,40,.7)';
   const MIT_SCAN=800;                                      // 미체결 탐색 최대 봉
   function isSwingHigh(c){ if(c<SW_LEN||c+SW_LEN>=TOTAL)return false;
     const h=allData[c].high; for(let k=1;k<=SW_LEN;k++){if(allData[c-k].high>=h||allData[c+k].high>=h)return false;} return true; }
   function isSwingLow(c){ if(c<SW_LEN||c+SW_LEN>=TOTAL)return false;
     const l=allData[c].low; for(let k=1;k<=SW_LEN;k++){if(allData[c-k].low<=l||allData[c+k].low<=l)return false;} return true; }
-  const allSwings=[], allStructs=[], allOBs=[], allFVGs=[], allZones=[], allPats=[];  // 전 구간 선계산
+  const allSwings=[], allStructs=[], allOBs=[], allFVGs=[], allZones=[], allPats=[], allTrades=[];  // 전 구간 선계산
   (function buildSMC(){
     let trend=0, lastH=null, lastL=null;
     // 미체결 봉 탐색: 박스가 무효화되는 첫 봉 (없으면 Infinity)
@@ -900,7 +905,109 @@ try {
       if(isPL){pivs.push({price:l,time:allData[c].time,isHigh:false,rng}); if(pivs.length>12)pivs.shift(); detect(ci);}
     }
   })();
-  let smSwN=0, smStN=0, obN=0, fvgN=0, sessN=0, zoneN=0, patN=0;      // 공개된 개수
+  // --- 전략(김직선) 전체 시뮬레이션: 진입·손절·익절·KTR·청산·승패 ---
+  (function buildSignals(){
+    const V=(a,i)=>a[i]?a[i].value:null;
+    let zp=0; const zlive=[];                         // 공개 매물대 롤링(최대60)
+    let sp=0; const box=[null,null,null];             // 세션박스 최신(아/유/미) {top,bot,start}
+    let lastPH=null,lastPL=null, trendState=0,pullCount=0, buyLock=-1,sellLock=-1;
+    let cur=null;                                     // 진행중 거래
+    for(let i=0;i<TOTAL;i++){
+      const c=allData[i], t=c.time;
+      // 롤링 갱신
+      while(zp<allZones.length&&allZones[zp].knownIdx<=i){zlive.push(allZones[zp]); if(zlive.length>60)zlive.shift(); zp++;}
+      while(sp<allSess.length&&allSess[sp].startIdx<=i){const S=allSess[sp]; box[S.sess]={top:S.high,bot:S.low,start:S.start}; sp++;}
+      // 피벗(pivLen=5) 갱신
+      const pc=i-SIG_PIV;
+      if(pc>=SIG_PIV){ let ph=true,pl=true; const H=allData[pc].high,L=allData[pc].low;
+        for(let k=1;k<=SIG_PIV;k++){ if(allData[pc-k].high>=H||allData[pc+k].high>=H)ph=false; if(allData[pc-k].low<=L||allData[pc+k].low<=L)pl=false; }
+        if(ph)lastPH=H; if(pl)lastPL=L; }
+      const s20=V(ind.s20,i),s60=V(ind.s60,i),s120=V(ind.s120,i);
+      const bU=V(ind.bU,i),bL=V(ind.bL,i),b4U=V(ind.b4U,i),b4L=V(ind.b4L,i),rsi=V(ind.rsi,i);
+      const ready=s20!=null&&s60!=null&&s120!=null&&bU!=null&&b4U!=null;
+      // ---- 청산 판정 (진행중 거래) ----
+      if(cur&&i>cur.entryIdx){
+        let hit=null,px=null,rs=null;
+        if(cur.dir>0){ if(c.low<=cur.stop){hit=1;px=cur.stop;rs='손절';}
+          else if(c.high>=cur.target){hit=1;px=cur.target;rs='익절';} }
+        else { if(c.high>=cur.stop){hit=1;px=cur.stop;rs='손절';}
+          else if(c.low<=cur.target){hit=1;px=cur.target;rs='익절';} }
+        if(hit){ cur.exitIdx=i; cur.exitTime=t; cur.exitPrice=px; cur.exitReason=rs;
+          cur.profit=cur.dir>0?px-cur.entry:cur.entry-px; cur.win=cur.profit>=0; cur=null; }
+      }
+      if(!ready){continue;}
+      // ---- 신호 계산 ----
+      const bull=s20>s60&&s60>s120, bear=s20<s60&&s60<s120, chop=!bull&&!bear;
+      const disp=(c.close/s20-1)*100;
+      const dblUp=c.high>=bU&&c.high>=b4U, dblLow=c.low<=bL&&c.low<=b4L;
+      const j4Up=c.high>=b4U&&!dblUp, j4Low=c.low<=b4L&&!dblLow;
+      const tUp=j4Up||dblUp, tLow=j4Low||dblLow;
+      const buyRaw=(bull&&tLow)||(chop&&dblLow), sellRaw=(bear&&tUp)||(chop&&dblUp);
+      // 변곡 락
+      if(bear&&dblLow&&(disp<=-1||rsi<=30))sellLock=i+SIG_LOCK;
+      if(bull&&dblUp&&(disp>=1||rsi>=70))buyLock=i+SIG_LOCK;
+      const buyBlk=i<=buyLock, sellBlk=i<=sellLock;
+      // 눌림
+      const ns=bull?1:bear?-1:0; if(ns!==trendState){trendState=ns;pullCount=0;}
+      const pullOK=pullCount<SIG_MAXPULL;
+      // 매물대 게이트
+      let touched=false;
+      for(const z of zlive){ if(c.low<=z.top&&c.high>=z.bot){touched=true;break;} }
+      if(!touched)for(const b of box){ if(b&&c.low<=b.top&&c.high>=b.bot){touched=true;break;} }
+      // 목요일 미장 초반 2시간
+      const cs=sessionOf(t), us=box[2];
+      const usFirst=cs===2&&us&&(t-us.start)<7200;
+      const thu=us&&new Date((us.start+9*3600)*1000).getUTCDay()===4;
+      const noThu=usFirst&&thu;
+      const buySig=(buyRaw&&(bull?pullOK:true))&&!buyBlk&&touched&&!noThu;
+      const sellSig=(sellRaw&&(bear?pullOK:true))&&!sellBlk&&touched&&!noThu;
+      // 반대신호 청산
+      if(cur&&i>cur.entryIdx){
+        if(cur.dir>0&&sellSig){cur.exitIdx=i;cur.exitTime=t;cur.exitPrice=c.close;cur.exitReason='반대신호';cur.profit=c.close-cur.entry;cur.win=cur.profit>=0;cur=null;}
+        else if(cur.dir<0&&buySig){cur.exitIdx=i;cur.exitTime=t;cur.exitPrice=c.close;cur.exitReason='반대신호';cur.profit=cur.entry-c.close;cur.win=cur.profit>=0;cur=null;}
+      }
+      // ---- 신규 진입 ----
+      if(!cur&&(buySig||sellSig)){
+        const isBuy=buySig, dir=isBuy?1:-1, entry=c.close, ktr=c.high-c.low, buf=SIG_BUF*ktr;
+        const b=box[cs];                              // 현재 세션박스
+        let stop=null,ss=null;
+        const rawStop=b?(isBuy?b.bot-buf:b.top+buf):null;
+        const rawOk=rawStop!=null&&(isBuy?rawStop<entry:rawStop>entry);
+        const swBase=isBuy?lastPL:lastPH;
+        const swStop=swBase!=null?(isBuy?swBase-buf:swBase+buf):null;
+        const swOk=swStop!=null&&(isBuy?swStop<entry:swStop>entry);
+        if(rawOk){stop=rawStop;ss='시가박스';} else if(swOk){stop=swStop;ss='전고저';}
+        if(stop!=null){
+          const risk=Math.abs(entry-stop);
+          // 목표 캐스케이드
+          let zBest=null; const edges=[];
+          for(const bb of box){ if(bb){edges.push(bb.top);edges.push(bb.bot);} }
+          for(const v of edges){ if((isBuy?v>entry:v<entry)&&(zBest==null||(isBuy?v<zBest:v>zBest)))zBest=v; }
+          for(const z of zlive){ const zv=isBuy?z.bot:z.top; if((isBuy?zv>entry:zv<entry)&&(zBest==null||(isBuy?zv<zBest:zv>zBest)))zBest=zv; }
+          let band=null; const bw=isBuy?b4U:b4L, bd=isBuy?bU:bL;
+          if(isBuy){ if(bw>entry)band=bw; if(bd>entry&&(band==null||bd<band))band=bd; }
+          else { if(bw<entry)band=bw; if(bd<entry&&(band==null||bd>band))band=bd; }
+          const swT=isBuy?lastPH:lastPL, swTok=swT!=null&&(isBuy?swT>entry:swT<entry);
+          let ma=null; const mas=[s20,s60,s120];
+          for(const m of mas){ if((isBuy?m>entry:m<entry)&&(ma==null||(isBuy?m<ma:m>ma)))ma=m; }
+          let target,ts;
+          if(zBest!=null){target=zBest;ts='매물대';}
+          else if(band!=null){target=band;ts='원비/더블비';}
+          else if(swTok){target=swT;ts='전고저';}
+          else if(ma!=null){target=ma;ts='이평';}
+          else {target=isBuy?entry+SIG_RRMULT*risk:entry-SIG_RRMULT*risk;ts='2:1';}
+          const rr=risk>0?Math.abs(target-entry)/risk:0;
+          if(rr>=SIG_MINRR){
+            if(!chop)pullCount++;
+            cur={dir,entryIdx:i,entryTime:t,entry,stop,target,ktr,stopSrc:ss,tgtSrc:ts,rr,
+              exitIdx:null,exitTime:null,exitPrice:null,exitReason:null,profit:null,win:null};
+            allTrades.push(cur);
+          }
+        }
+      }
+    }
+  })();
+  let smSwN=0, smStN=0, obN=0, fvgN=0, sessN=0, zoneN=0, patN=0, tradeN=0;      // 공개된 개수
   function revealSMC(maxIdx){
     while(smSwN<allSwings.length&&allSwings[smSwN].knownIdx<=maxIdx)smSwN++;
     while(smStN<allStructs.length&&allStructs[smStN].knownIdx<=maxIdx)smStN++;
@@ -909,6 +1016,7 @@ try {
     while(sessN<allSess.length&&allSess[sessN].startIdx<=maxIdx)sessN++;
     while(zoneN<allZones.length&&allZones[zoneN].knownIdx<=maxIdx)zoneN++;
     while(patN<allPats.length&&allPats[patN].knownIdx<=maxIdx)patN++;
+    while(tradeN<allTrades.length&&allTrades[tradeN].entryIdx<=maxIdx)tradeN++;
   }
   // 오버레이 캔버스
   const smCanvas=document.getElementById('smc-overlay');
@@ -927,7 +1035,7 @@ try {
     if(!sctx)return;
     sctx.clearRect(0,0,smCanvas.width,smCanvas.height);
     if(viewTF!=='1h')return;                       // SMC·오버레이는 1h에서만 (2단계서 확장)
-    if(!smc.swing&&!smc.bos&&!smc.ob&&!smc.fvg&&!smc.vrvp&&!smc.sess&&!smc.zone&&!smc.pat)return;
+    if(!smc.swing&&!smc.bos&&!smc.ob&&!smc.fvg&&!smc.vrvp&&!smc.sess&&!smc.zone&&!smc.pat&&!smc.sig)return;
     const ts=chart.timeScale(), X=t=>ts.timeToCoordinate(t), Y=p=>candleSeries.priceToCoordinate(p);
     const vr=ts.getVisibleRange();
     const rightT=allData[idx-1].time;
@@ -1040,6 +1148,38 @@ try {
       const act=[]; for(let k=0;k<obN;k++){const o=allOBs[k]; if(o.mitIdx>idx-1)act.push(o);}
       for(const o of act.slice(-8)) drawBox(o.leftTime,rightT,o.top,o.bottom,
         o.bias>0?OB_BULL_F:OB_BEAR_F, o.bias>0?OB_BULL_B:OB_BEAR_B);
+    }
+    // 전략 신호 (복습 오버레이): 진입 화살표 + 진입/손절/익절선 + 승패
+    if(smc.sig&&vr){
+      const revealed=[]; for(let k=0;k<tradeN;k++)if(allTrades[k].entryIdx<=idx-1)revealed.push(allTrades[k]);
+      let wins=0,losses=0;
+      for(const T of revealed){ if(T.exitIdx!=null&&T.exitIdx<=idx-1){ T.win?wins++:losses++; } }
+      const hline=(t1,t2,price,col,dash)=>{const x1=X(Math.max(t1,vr.from)),x2=X(Math.min(t2,vr.to)),y=Y(price);
+        if(x1==null||x2==null||y==null)return; sctx.strokeStyle=col;sctx.lineWidth=1;sctx.setLineDash(dash||[]);
+        sctx.beginPath();sctx.moveTo(x1,y);sctx.lineTo(x2,y);sctx.stroke();sctx.setLineDash([]);};
+      for(const T of revealed.slice(-SIG_MAXDRAW)){
+        const exited=T.exitIdx!=null&&T.exitIdx<=idx-1;
+        const rEnd=exited?Math.min(T.exitTime,rightT):rightT;
+        hline(T.entryTime,rEnd,T.entry,'rgba(120,120,120,.9)');       // 진입선
+        hline(T.entryTime,rEnd,T.stop,'rgba(224,82,74,.9)',[4,3]);    // 손절선
+        hline(T.entryTime,rEnd,T.target,'rgba(38,169,107,.9)',[4,3]); // 익절선
+        // 진입 화살표
+        const ex=X(T.entryTime), ey=Y(T.dir>0?allData[T.entryIdx].low:allData[T.entryIdx].high);
+        if(ex!=null&&ey!=null){const up=T.dir>0,col=up?SIG_BUY:SIG_SELL,dy=up?10:-10;
+          sctx.fillStyle=col;sctx.beginPath();
+          sctx.moveTo(ex,ey+(up?6:-6));sctx.lineTo(ex-5,ey+dy);sctx.lineTo(ex+5,ey+dy);sctx.closePath();sctx.fill();
+          sctx.font='9px sans-serif';sctx.textAlign='center';sctx.textBaseline=up?'top':'bottom';
+          sctx.fillText(up?'매수':'매도',ex,ey+(up?15:-15));}
+        // 결과 마커
+        if(exited){const cx=X(T.exitTime),cy=Y(T.exitPrice);
+          if(cx!=null&&cy!=null){sctx.fillStyle=T.win?SIG_BUY:SIG_SELL;sctx.font='bold 11px sans-serif';
+            sctx.textAlign='center';sctx.textBaseline='middle';sctx.fillText(T.win?'✓':'✗',cx,cy);}}
+      }
+      // 미니 통계 (좌상단)
+      const tot=wins+losses;
+      sctx.fillStyle='rgba(20,22,28,.8)';sctx.fillRect(6,6,146,20);
+      sctx.fillStyle='#e8e8e8';sctx.font='11px sans-serif';sctx.textAlign='left';sctx.textBaseline='middle';
+      sctx.fillText(`전략 ${tot}전 ${wins}승 ${losses}패`+(tot?` (${(wins/tot*100).toFixed(0)}%)`:''),12,16);
     }
     if(smc.bos){
       sctx.lineWidth=1; sctx.font='10px sans-serif'; sctx.textBaseline='middle'; sctx.textAlign='center';
@@ -1159,6 +1299,7 @@ try {
     smcFvg:  {on:false,fn:v=>{smc.fvg=v;drawSMC();}},
     smcZone: {on:false,fn:v=>{smc.zone=v;drawSMC();}},
     smcPat:  {on:false,fn:v=>{smc.pat=v;drawSMC();}},
+    smcSig:  {on:false,fn:v=>{smc.sig=v;drawSMC();}},
     vrvp:    {on:false,fn:v=>{smc.vrvp=v;drawSMC();}},
     sess:    {on:false,fn:v=>{smc.sess=v;drawSMC();}}
   };
