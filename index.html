@@ -346,6 +346,7 @@
         <button class="tgl" data-tg="smcOb">오더블록</button>
         <button class="tgl" data-tg="smcFvg">FVG</button>
         <button class="tgl" data-tg="smcZone">매물대</button>
+        <button class="tgl" data-tg="smcPat">패턴(W/M)</button>
         <button class="tgl" data-tg="vrvp">VRVP(매물대)</button>
         <button class="tgl" data-tg="sess">시가박스(세션)</button>
       </div>
@@ -742,18 +743,20 @@ try {
 
   // ===================== 4-b. SMC (스윙 구조 / BOS·CHoCH) — © LuxAlgo, CC BY-NC-SA 4.0 =====================
   const SW_LEN=10, BULL=1, BEAR=-1, SMC_GREEN='#089981', SMC_RED='#F23645';
-  const smc={swing:false,bos:false,ob:false,fvg:false,vrvp:false,sess:false,zone:false};   // 기본 전부 꺼짐
+  const smc={swing:false,bos:false,ob:false,fvg:false,vrvp:false,sess:false,zone:false,pat:false};   // 기본 전부 꺼짐
   const OB_BULL_F='rgba(49,121,245,.16)', OB_BULL_B='rgba(49,121,245,.55)';
   const OB_BEAR_F='rgba(242,54,69,.14)',  OB_BEAR_B='rgba(242,54,69,.55)';
   const FVG_BULL='rgba(0,170,95,.14)',    FVG_BEAR='rgba(242,54,69,.12)';
   const ZONE_F='rgba(0,150,136,.13)', ZONE_B='rgba(0,150,136,.5)';   // 매물대(teal)
   const ZONE_LEN=10, ZONE_MERGE=0.5, ZONE_EXT=30, ZONE_MAXDRAW=25;   // Pine: zoneLen/mergeKTR/zoneExtend/maxDrawZones
+  const PAT_LEN=5, PAT_TOL=0.5, PAT_MAXDRAW=8;                        // Pine: patLen/tolKTR/maxPats
+  const PAT_COL='#d500f9', PAT_NECK='rgba(150,150,150,.85)', PAT_MM_F='rgba(213,0,249,.10)', PAT_MM_B='rgba(213,0,249,.45)';
   const MIT_SCAN=800;                                      // 미체결 탐색 최대 봉
   function isSwingHigh(c){ if(c<SW_LEN||c+SW_LEN>=TOTAL)return false;
     const h=allData[c].high; for(let k=1;k<=SW_LEN;k++){if(allData[c-k].high>=h||allData[c+k].high>=h)return false;} return true; }
   function isSwingLow(c){ if(c<SW_LEN||c+SW_LEN>=TOTAL)return false;
     const l=allData[c].low; for(let k=1;k<=SW_LEN;k++){if(allData[c-k].low<=l||allData[c+k].low<=l)return false;} return true; }
-  const allSwings=[], allStructs=[], allOBs=[], allFVGs=[], allZones=[];  // 전 구간 선계산
+  const allSwings=[], allStructs=[], allOBs=[], allFVGs=[], allZones=[], allPats=[];  // 전 구간 선계산
   (function buildSMC(){
     let trend=0, lastH=null, lastL=null;
     // 미체결 봉 탐색: 박스가 무효화되는 첫 봉 (없으면 Infinity)
@@ -856,7 +859,48 @@ try {
       }
     }
   })();
-  let smSwN=0, smStN=0, obN=0, fvgN=0, sessN=0, zoneN=0;      // 공개된 개수
+  // --- W/M·3중바닥/천장 패턴 (Pine: 피벗 patLen + 이중/삼중) ---
+  (function buildPatterns(){
+    const pivs=[];
+    function detect(confirmIdx){
+      const n=pivs.length; if(n<3)return;
+      const p3=pivs[n-1],p2=pivs[n-2],p1=pivs[n-3];
+      let name=null,neck=null,bottom=false,startI=n-3,extreme=null;
+      if(n>=5){
+        const q5=p3,q4=p2,q3=p1,q2=pivs[n-4],q1=pivs[n-5];
+        if(!q1.isHigh&&q2.isHigh&&!q3.isHigh&&q4.isHigh&&!q5.isHigh){
+          const tol=PAT_TOL*(q1.rng+q3.rng+q5.rng)/3, lmax=Math.max(q1.price,q3.price,q5.price), lmin=Math.min(q1.price,q3.price,q5.price), nk=Math.max(q2.price,q4.price);
+          if(lmax-lmin<=tol&&nk>lmax){name='3중바닥';neck=nk;bottom=true;startI=n-5;extreme=lmin;}
+        }
+        if(!name&&q1.isHigh&&!q2.isHigh&&q3.isHigh&&!q4.isHigh&&q5.isHigh){
+          const tol=PAT_TOL*(q1.rng+q3.rng+q5.rng)/3, hmax=Math.max(q1.price,q3.price,q5.price), hmin=Math.min(q1.price,q3.price,q5.price), nk=Math.min(q2.price,q4.price);
+          if(hmax-hmin<=tol&&nk<hmin){name='3중천장';neck=nk;bottom=false;startI=n-5;extreme=hmax;}
+        }
+      }
+      if(!name){
+        if(!p1.isHigh&&p2.isHigh&&!p3.isHigh){
+          const tol=PAT_TOL*(p1.rng+p3.rng)/2;
+          if(Math.abs(p1.price-p3.price)<=tol&&p2.price>Math.max(p1.price,p3.price)){name='W 더블바텀';neck=p2.price;bottom=true;extreme=Math.min(p1.price,p3.price);}
+        } else if(p1.isHigh&&!p2.isHigh&&p3.isHigh){
+          const tol=PAT_TOL*(p1.rng+p3.rng)/2;
+          if(Math.abs(p1.price-p3.price)<=tol&&p2.price<Math.min(p1.price,p3.price)){name='M 더블탑';neck=p2.price;bottom=false;extreme=Math.max(p1.price,p3.price);}
+        }
+      }
+      if(!name)return;
+      const pts=[]; for(let j=startI;j<n;j++)pts.push({time:pivs[j].time,price:pivs[j].price});
+      const mm=bottom?neck+(neck-extreme):neck-(extreme-neck);
+      allPats.push({type:name,pts,neck,bottom,mm,labTime:p3.time,labPrice:p3.price,
+        confTime:(allData[confirmIdx]||allData[TOTAL-1]).time,knownIdx:confirmIdx});
+    }
+    for(let c=PAT_LEN;c<TOTAL-PAT_LEN;c++){
+      const h=allData[c].high,l=allData[c].low; let isPH=true,isPL=true;
+      for(let k=1;k<=PAT_LEN;k++){ if(allData[c-k].high>=h||allData[c+k].high>=h)isPH=false; if(allData[c-k].low<=l||allData[c+k].low<=l)isPL=false; }
+      const rng=h-l, ci=c+PAT_LEN;
+      if(isPH){pivs.push({price:h,time:allData[c].time,isHigh:true,rng}); if(pivs.length>12)pivs.shift(); detect(ci);}
+      if(isPL){pivs.push({price:l,time:allData[c].time,isHigh:false,rng}); if(pivs.length>12)pivs.shift(); detect(ci);}
+    }
+  })();
+  let smSwN=0, smStN=0, obN=0, fvgN=0, sessN=0, zoneN=0, patN=0;      // 공개된 개수
   function revealSMC(maxIdx){
     while(smSwN<allSwings.length&&allSwings[smSwN].knownIdx<=maxIdx)smSwN++;
     while(smStN<allStructs.length&&allStructs[smStN].knownIdx<=maxIdx)smStN++;
@@ -864,6 +908,7 @@ try {
     while(fvgN<allFVGs.length&&allFVGs[fvgN].knownIdx<=maxIdx)fvgN++;
     while(sessN<allSess.length&&allSess[sessN].startIdx<=maxIdx)sessN++;
     while(zoneN<allZones.length&&allZones[zoneN].knownIdx<=maxIdx)zoneN++;
+    while(patN<allPats.length&&allPats[patN].knownIdx<=maxIdx)patN++;
   }
   // 오버레이 캔버스
   const smCanvas=document.getElementById('smc-overlay');
@@ -882,7 +927,7 @@ try {
     if(!sctx)return;
     sctx.clearRect(0,0,smCanvas.width,smCanvas.height);
     if(viewTF!=='1h')return;                       // SMC·오버레이는 1h에서만 (2단계서 확장)
-    if(!smc.swing&&!smc.bos&&!smc.ob&&!smc.fvg&&!smc.vrvp&&!smc.sess&&!smc.zone)return;
+    if(!smc.swing&&!smc.bos&&!smc.ob&&!smc.fvg&&!smc.vrvp&&!smc.sess&&!smc.zone&&!smc.pat)return;
     const ts=chart.timeScale(), X=t=>ts.timeToCoordinate(t), Y=p=>candleSeries.priceToCoordinate(p);
     const vr=ts.getVisibleRange();
     const rightT=allData[idx-1].time;
@@ -954,13 +999,35 @@ try {
         }
       }
     }
-    // 매물대 (최근 25개, 탐지지점 30봉 폭)
+    // 매물대 (최근 25개, 현재 봉까지 연장)
     if(smc.zone){
       const z0=Math.max(0,zoneN-ZONE_MAXDRAW);
       for(let k=z0;k<zoneN;k++){const z=allZones[k];
-        const rEnd=Math.min(z.leftTime+ZONE_EXT*3600, rightT);
         let top=z.top,bot=z.bot; if(top===bot){top+=0.05;bot-=0.05;}   // 레벨(돌파)은 얇게
-        drawBox(z.leftTime,rEnd,top,bot,ZONE_F,ZONE_B,z.typ);
+        drawBox(z.leftTime,rightT,top,bot,ZONE_F,ZONE_B,z.typ);
+      }
+    }
+    // 패턴 W/M·3중 (최근 8개)
+    if(smc.pat&&vr){
+      const p0=Math.max(0,patN-PAT_MAXDRAW);
+      for(let k=p0;k<patN;k++){const P=allPats[k];
+        // 피벗 폴리라인
+        sctx.strokeStyle=PAT_COL; sctx.lineWidth=2; sctx.setLineDash([]); sctx.beginPath();
+        let started=false;
+        for(const pt of P.pts){const x=X(pt.time),y=Y(pt.price);
+          if(x==null||y==null){started=false;continue;} if(!started){sctx.moveTo(x,y);started=true;}else sctx.lineTo(x,y);}
+        sctx.stroke();
+        // 넥라인 (현재까지 점선)
+        const nlt=Math.max(P.pts[0].time,vr.from), nrt=Math.min(rightT,vr.to);
+        const nx1=X(nlt),nx2=X(nrt),ny=Y(P.neck);
+        if(nx1!=null&&nx2!=null&&ny!=null){sctx.setLineDash([4,3]);sctx.strokeStyle=PAT_NECK;sctx.lineWidth=1;
+          sctx.beginPath();sctx.moveTo(nx1,ny);sctx.lineTo(nx2,ny);sctx.stroke();sctx.setLineDash([]);}
+        // 목표(measured move) 박스
+        drawBox(P.confTime,rightT,Math.max(P.neck,P.mm),Math.min(P.neck,P.mm),PAT_MM_F,PAT_MM_B);
+        // 라벨
+        const lx=X(P.labTime),ly=Y(P.labPrice);
+        if(lx!=null&&ly!=null){sctx.fillStyle=PAT_COL;sctx.font='10px sans-serif';sctx.textAlign='center';
+          sctx.textBaseline=P.bottom?'top':'bottom';sctx.fillText(P.type,lx,ly+(P.bottom?7:-7));}
       }
     }
     // FVG (최근 활성 8개)
@@ -1091,6 +1158,7 @@ try {
     smcOb:   {on:false,fn:v=>{smc.ob=v;drawSMC();}},
     smcFvg:  {on:false,fn:v=>{smc.fvg=v;drawSMC();}},
     smcZone: {on:false,fn:v=>{smc.zone=v;drawSMC();}},
+    smcPat:  {on:false,fn:v=>{smc.pat=v;drawSMC();}},
     vrvp:    {on:false,fn:v=>{smc.vrvp=v;drawSMC();}},
     sess:    {on:false,fn:v=>{smc.sess=v;drawSMC();}}
   };
