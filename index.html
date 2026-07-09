@@ -345,6 +345,7 @@
         <button class="tgl" data-tg="smcBos">SMC 구조(BOS/CHoCH)</button>
         <button class="tgl" data-tg="smcOb">오더블록</button>
         <button class="tgl" data-tg="smcFvg">FVG</button>
+        <button class="tgl" data-tg="smcZone">매물대</button>
         <button class="tgl" data-tg="vrvp">VRVP(매물대)</button>
         <button class="tgl" data-tg="sess">시가박스(세션)</button>
       </div>
@@ -741,16 +742,18 @@ try {
 
   // ===================== 4-b. SMC (스윙 구조 / BOS·CHoCH) — © LuxAlgo, CC BY-NC-SA 4.0 =====================
   const SW_LEN=10, BULL=1, BEAR=-1, SMC_GREEN='#089981', SMC_RED='#F23645';
-  const smc={swing:false,bos:false,ob:false,fvg:false,vrvp:false,sess:false};   // 기본 전부 꺼짐
+  const smc={swing:false,bos:false,ob:false,fvg:false,vrvp:false,sess:false,zone:false};   // 기본 전부 꺼짐
   const OB_BULL_F='rgba(49,121,245,.16)', OB_BULL_B='rgba(49,121,245,.55)';
   const OB_BEAR_F='rgba(242,54,69,.14)',  OB_BEAR_B='rgba(242,54,69,.55)';
   const FVG_BULL='rgba(0,170,95,.14)',    FVG_BEAR='rgba(242,54,69,.12)';
+  const ZONE_F='rgba(0,150,136,.13)', ZONE_B='rgba(0,150,136,.5)';   // 매물대(teal)
+  const ZONE_LEN=10, ZONE_MERGE=0.5, ZONE_EXT=30, ZONE_MAXDRAW=25;   // Pine: zoneLen/mergeKTR/zoneExtend/maxDrawZones
   const MIT_SCAN=800;                                      // 미체결 탐색 최대 봉
   function isSwingHigh(c){ if(c<SW_LEN||c+SW_LEN>=TOTAL)return false;
     const h=allData[c].high; for(let k=1;k<=SW_LEN;k++){if(allData[c-k].high>=h||allData[c+k].high>=h)return false;} return true; }
   function isSwingLow(c){ if(c<SW_LEN||c+SW_LEN>=TOTAL)return false;
     const l=allData[c].low; for(let k=1;k<=SW_LEN;k++){if(allData[c-k].low<=l||allData[c+k].low<=l)return false;} return true; }
-  const allSwings=[], allStructs=[], allOBs=[], allFVGs=[];  // 전 구간 선계산 (knownIdx = 확정되는 봉)
+  const allSwings=[], allStructs=[], allOBs=[], allFVGs=[], allZones=[];  // 전 구간 선계산
   (function buildSMC(){
     let trend=0, lastH=null, lastL=null;
     // 미체결 봉 탐색: 박스가 무효화되는 첫 봉 (없으면 Infinity)
@@ -825,13 +828,42 @@ try {
     }
     if(cur)cur.end=prevT;
   })();
-  let smSwN=0, smStN=0, obN=0, fvgN=0, sessN=0;      // 공개된 개수
+  // --- 매물대 자동탐지 (Pine: 장악형/돌파/AM + 병합) ---
+  (function buildZones(){
+    const live=[];                            // 병합 추적용 {top,bot}
+    for(let i=1;i<TOTAL;i++){
+      const c=allData[i], p=allData[i-1];
+      // 직전 ZONE_LEN봉의 최고/최저 (현재봉 제외)
+      let hh=-Infinity, ll=Infinity;
+      for(let k=1;k<=ZONE_LEN && i-k>=0;k++){ if(allData[i-k].high>hh)hh=allData[i-k].high; if(allData[i-k].low<ll)ll=allData[i-k].low; }
+      const found=[];
+      const engBull=c.close>c.open && p.close<p.open && c.high>=p.high && c.low<=p.low;
+      const engBear=c.close<c.open && p.close>p.open && c.high>=p.high && c.low<=p.low;
+      if(engBull||engBear)found.push({top:c.high,bot:c.low,typ:'장악형'});
+      if(hh>-Infinity && c.close>hh)found.push({top:hh,bot:hh,typ:'돌파'});
+      if(ll<Infinity  && c.close<ll)found.push({top:ll,bot:ll,typ:'돌파'});
+      const bodyTop=Math.max(c.open,c.close), bodyBot=Math.min(c.open,c.close);
+      if(hh>-Infinity && c.high>hh)found.push({top:c.high,bot:bodyTop,typ:'AM'});
+      if(ll<Infinity  && c.low<ll )found.push({top:bodyBot,bot:c.low,typ:'AM'});
+      const tol=ZONE_MERGE*(c.high-c.low);
+      for(const z of found){
+        let dup=false;
+        for(const ex of live){ if(z.bot<=ex.top+tol && z.top>=ex.bot-tol){dup=true;break;} }
+        if(dup)continue;
+        live.push({top:z.top,bot:z.bot});
+        if(live.length>60)live.shift();
+        allZones.push({top:z.top,bot:z.bot,typ:z.typ,leftTime:c.time,knownIdx:i});
+      }
+    }
+  })();
+  let smSwN=0, smStN=0, obN=0, fvgN=0, sessN=0, zoneN=0;      // 공개된 개수
   function revealSMC(maxIdx){
     while(smSwN<allSwings.length&&allSwings[smSwN].knownIdx<=maxIdx)smSwN++;
     while(smStN<allStructs.length&&allStructs[smStN].knownIdx<=maxIdx)smStN++;
     while(obN<allOBs.length&&allOBs[obN].knownIdx<=maxIdx)obN++;
     while(fvgN<allFVGs.length&&allFVGs[fvgN].knownIdx<=maxIdx)fvgN++;
     while(sessN<allSess.length&&allSess[sessN].startIdx<=maxIdx)sessN++;
+    while(zoneN<allZones.length&&allZones[zoneN].knownIdx<=maxIdx)zoneN++;
   }
   // 오버레이 캔버스
   const smCanvas=document.getElementById('smc-overlay');
@@ -850,7 +882,7 @@ try {
     if(!sctx)return;
     sctx.clearRect(0,0,smCanvas.width,smCanvas.height);
     if(viewTF!=='1h')return;                       // SMC·오버레이는 1h에서만 (2단계서 확장)
-    if(!smc.swing&&!smc.bos&&!smc.ob&&!smc.fvg&&!smc.vrvp&&!smc.sess)return;
+    if(!smc.swing&&!smc.bos&&!smc.ob&&!smc.fvg&&!smc.vrvp&&!smc.sess&&!smc.zone)return;
     const ts=chart.timeScale(), X=t=>ts.timeToCoordinate(t), Y=p=>candleSeries.priceToCoordinate(p);
     const vr=ts.getVisibleRange();
     const rightT=allData[idx-1].time;
@@ -920,6 +952,15 @@ try {
             sctx.beginPath();sctx.moveTo(x1,ym);sctx.lineTo(x2,ym);sctx.stroke();sctx.setLineDash([]);
           }
         }
+      }
+    }
+    // 매물대 (최근 25개, 탐지지점 30봉 폭)
+    if(smc.zone){
+      const z0=Math.max(0,zoneN-ZONE_MAXDRAW);
+      for(let k=z0;k<zoneN;k++){const z=allZones[k];
+        const rEnd=Math.min(z.leftTime+ZONE_EXT*3600, rightT);
+        let top=z.top,bot=z.bot; if(top===bot){top+=0.05;bot-=0.05;}   // 레벨(돌파)은 얇게
+        drawBox(z.leftTime,rEnd,top,bot,ZONE_F,ZONE_B,z.typ);
       }
     }
     // FVG (최근 활성 8개)
@@ -1049,6 +1090,7 @@ try {
     smcBos:  {on:false,fn:v=>{smc.bos=v;drawSMC();}},
     smcOb:   {on:false,fn:v=>{smc.ob=v;drawSMC();}},
     smcFvg:  {on:false,fn:v=>{smc.fvg=v;drawSMC();}},
+    smcZone: {on:false,fn:v=>{smc.zone=v;drawSMC();}},
     vrvp:    {on:false,fn:v=>{smc.vrvp=v;drawSMC();}},
     sess:    {on:false,fn:v=>{smc.sess=v;drawSMC();}}
   };
