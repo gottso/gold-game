@@ -1,0 +1,88 @@
+{
+  "version": "2026-11-04-v1",
+  "checkedAtUtc": "2026-11-03T16:18:41.890619+00:00",
+  "baseCommit": "88be1db7c5ddcef98e434278d6bfcfc1a91de202",
+  "unitTests": {
+    "passed": 27,
+    "failed": 0
+  },
+  "browser": {
+    "passed": 42,
+    "checks": [
+      "eleven selectable modes",
+      "verified actual data default",
+      "replay progresses in mode 1",
+      "right signal timeframe 1",
+      "replay progresses in mode 2",
+      "right signal timeframe 2",
+      "replay progresses in mode 3",
+      "right signal timeframe 3",
+      "replay progresses in mode 4",
+      "right signal timeframe 4",
+      "replay progresses in mode 5",
+      "right signal timeframe 5",
+      "replay progresses in mode 6",
+      "right signal timeframe 6",
+      "replay progresses in mode 7",
+      "right signal timeframe 7",
+      "replay progresses in mode 8",
+      "right signal timeframe 8",
+      "replay progresses in mode 9",
+      "right signal timeframe 9",
+      "replay progresses in mode jikil",
+      "right signal timeframe jikil",
+      "replay progresses in mode benpark",
+      "right signal timeframe benpark",
+      "sixth mode ungraded",
+      "exam hides rationale",
+      "exam reveals after decision",
+      "paper order queued",
+      "first Benpark slice is .02 lot",
+      "accounts independent",
+      "mode account restores",
+      "reload restores paper position",
+      "export includes source and decisions",
+      "export excludes credentials",
+      "actual CSV import works",
+      "M5 never becomes synthetic M3",
+      "no mobile overflow 390",
+      "no mobile overflow 320",
+      "legacy game training link exists",
+      "existing connection passed within session",
+      "provider failure preserves actual snapshot",
+      "no browser exceptions"
+    ],
+    "errors": [],
+    "scope": "Local source routed into Chromium; no live provider claim from this test."
+  },
+  "liveProviderRead": {
+    "M1Returned": 5000,
+    "H1Returned": 800,
+    "provider": "Twelve Data",
+    "symbol": "XAU/USD",
+    "lastM1OpenUtc": "2026-11-03T16:01:00Z",
+    "note": "Separate real read; completed records and inherited KST calendar applied. Snapshot is not continuous live data."
+  },
+  "zoneReference": {
+    "sha256": "4163876fa0441c46d2ea72dc83a15bc71b437b181aa4ed7cd6cd00c65d377b6d",
+    "snapshotsMatched": 24,
+    "scope": "Existing Python numerical reconstruction, not TradingView runtime parity"
+  },
+  "pineSources": {
+    "01_매물대_쌍비_변곡_차트진입.pine": "2405cebbf01b1c5b46e5d53862f1400203c81e901e36e392e02356c99821e819",
+    "02_추세지속_기본비_눌림_차트진입.pine": "8e7b6f167b5bcb230565adc0e221a766b1c8d1140d2f1c1c7b0f58ba568accb5",
+    "03_20_120_교차_첫_장기이평_차트진입.pine": "319ac694afe4394f3e2bfddafdd72dbd28b0abd09754c45b8ba70401bdd63693",
+    "04_매물대_돌파_첫_눌림_차트진입.pine": "fa9eda3621765acf4b953b475016ad9a02e43b16f9df4c7a8689472b14761ef7",
+    "05_돌파_후_수축_기본비_차트진입.pine": "32422843547d4d576c66222c37d49041d3628dc53b81bd2c5eff9d748eb1e104",
+    "06_비오비_반대밴드_첫_수축원비_차트진입.pine": "1d330a9d76dc8d67b6c43a0f2355b3e42ae9a3be282c5b088dd3990e552e594d",
+    "07_돌파봉_25_50_되돌림_차트진입.pine": "ecbddccb382c068e57a08e927d3d5876ae7a81c227c5c2956dbdfc6c72409524",
+    "08_역할전환_첫_재시험_차트진입.pine": "1d19ed4209a772865191f6a780cd42b8371561c021b4b11c1eab1b94d4551c5e",
+    "09_이평_교차_첫_4_4_밴드_차트진입.pine": "25774292919e6d5267deeb62842e8d7b7f7563e6e4dff2653f81dca335303cde"
+  },
+  "boundaries": [
+    "Paper only; no order endpoint",
+    "Mode 6 manual; Jikil and Benpark source checks default",
+    "No claimed performance or complete TradingView runtime parity",
+    "Live browser CORS not asserted by routed browser tests"
+  ]
+}
