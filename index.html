@@ -112,7 +112,7 @@
 
   .foot{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--mut);flex-wrap:wrap;gap:8px}
   .foot .seed{font-family:var(--mono)}
-  .foot .newgame{display:flex;align-items:center;gap:6px}
+  .foot .newgame{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   .foot .ng-lbl{color:var(--mut)}
   .foot #balInput{width:84px;background:var(--panel2);border:1px solid var(--line);
     color:var(--txt);border-radius:6px;padding:6px 8px;font-family:var(--mono);
@@ -146,6 +146,7 @@
   .lb-empty{color:var(--mut);font-size:12px;text-align:center;padding:14px 0}
 
   #btnLive{background:#1f6feb;color:#fff;border:none;border-radius:7px;padding:8px 12px;font-size:12.5px;font-weight:600;white-space:nowrap}
+  #btnPractice{display:inline-block;background:#e8b84b;color:#1a1a1a;border-radius:7px;padding:8px 12px;font-size:12.5px;font-weight:600;text-decoration:none;white-space:nowrap}
   #liveBanner{display:none;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap;
     background:rgba(31,111,235,.14);border:1px solid rgba(31,111,235,.4);color:#9fc1ff;
     border-radius:8px;padding:7px 10px;margin:6px 0;font-size:12px}
@@ -407,6 +408,7 @@
         <input id="balInput" type="number" min="100" step="1000" value="10000">
         <button id="btnNew">↻ 새 게임</button>
         <button id="btnLive" title="최근 7일 실데이터를 받아 복습">📡 최근 7일</button>
+        <a id="btnPractice" href="practice.html?source=recent">11종 매매 연습</a>
       </span>
     </div>
     <div id="liveBanner">📡 최근 7일 복습 모드 · <span id="liveAt"></span> · 순위표 미기록 <button id="btnExitLive">일반 모드로</button></div>
@@ -1559,6 +1561,10 @@ try {
     }catch(e){ btn.disabled=false; btn.textContent=old; toast('로드 실패: '+(e.message||e),true); }
   }
   document.getElementById('btnLive').onclick=fetchLive;
+  // Reuse the existing connection only in this tab's session; never put the key in a URL or journal.
+  document.getElementById('btnPractice').addEventListener('click',()=>{
+    try{sessionStorage.setItem('goldTrainingKey',TD_KEY);}catch(e){}
+  });
   document.getElementById('btnExitLive').onclick=()=>{
     const u=new URL(location.href); u.searchParams.delete('live'); location.href=u.toString();};
   if(LIVE){
