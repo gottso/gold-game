@@ -71,3 +71,57 @@ export async function fetchRecent(key,{fetcher=fetch,now=Date.now()/1000}={}){
   const n=normalize(raw.filter(b=>tradableKST(b.time)),60,now),h=normalize(upper.filter(b=>tradableKST(b.time)),3600,now);if(n.bars.length<240)throw Error('완료된 1분봉이 240개 미만입니다. 실제 CSV를 가져오거나 기존 표본으로 연습해 주세요.');
   return {id:'recent-'+n.bars.at(-1).time,label:'Twelve Data 최근 실제 시세',symbol:'XAU/USD',provider:'Twelve Data',interval:60,bars:n.bars,upperBars:h.bars,audit:n.audit,calendar:'기존 게임 KST 거래시간',fetchedAt:new Date(now*1000).toISOString()};
 }
+
+const utcParam=time=>new Date(time*1000).toISOString().slice(0,19).replace('T',' ');
+export function practiceBounds(data){
+  if(!data.bars?.length)throw Error('연습할 실제 시세가 없습니다.');
+  return {start:Math.max(data.bars[0].time+data.interval,data.replayStart??-Infinity),end:Math.min(data.bars.at(-1).time+data.interval,data.replayEnd??Infinity)};
+}
+export function practiceCoverage(data){
+  const {end}=practiceBounds(data),start=data.replayStart??data.bars[0].time,bars=data.bars.filter(b=>b.time>=start&&b.time+data.interval<=end);
+  return {start,end,first:bars[0]?.time??null,last:bars.at(-1)?.time+data.interval||null,count:bars.length};
+}
+export function packDataset(data){
+  const pack=rows=>rows?.map(b=>[b.time,b.open,b.high,b.low,b.close,b.volume||0]);
+  return {...data,packing:'ohlcv-v1',bars:pack(data.bars),upperBars:pack(data.upperBars)};
+}
+export function unpackDataset(data){
+  if(!data||data.interval!==60||!Array.isArray(data.bars))throw Error('저장된 M1 자료를 읽을 수 없습니다.');
+  if(data.packing!=='ohlcv-v1')return data;
+  const unpack=rows=>rows?.map(b=>({time:b[0],open:b[1],high:b[2],low:b[3],close:b[4],volume:b[5]||0}));
+  const result={...data,bars:unpack(data.bars),upperBars:unpack(data.upperBars)};delete result.packing;return result;
+}
+export async function fetchFortnight(key,{fetcher=fetch,now=Date.now()/1000,onProgress=()=>{},signal}={}){
+  if(!key?.trim())throw Error('기존 게임의 최근 2주 버튼으로 연결하거나 데이터 설정에 API 키를 입력해 주세요.');
+  const end=Math.floor(now/60)*60,start=end-14*86400,warmupStart=start-3*86400,chunkSeconds=3*86400;
+  const chunks=[];for(let cursor=warmupStart;cursor<end;cursor+=chunkSeconds)chunks.push({start:cursor,end:Math.min(cursor+chunkSeconds,end)});
+  const base='https://api.twelvedata.com/time_series?'+new URLSearchParams({symbol:'XAU/USD',apikey:key.trim(),timezone:'UTC',order:'ASC',format:'JSON'});
+  const read=async(interval,outputsize,extra={})=>{
+    const response=await fetcher(base+'&'+new URLSearchParams({interval,outputsize:String(outputsize),...extra}),{signal});
+    const d=await response.json();
+    if(!response.ok||d.status==='error'||!Array.isArray(d.values))throw Error(String(d.message||'시세를 받지 못했습니다.').split(key.trim()).join('[숨김]'));
+    return d.values.map(v=>({time:Date.parse(v.datetime.replace(' ','T')+'Z')/1000,open:+v.open,high:+v.high,low:+v.low,close:+v.close,volume:+v.volume||0}));
+  };
+  const received=[];
+  for(let i=0;i<chunks.length;i++){
+    const chunk=chunks[i];onProgress({completed:i,total:chunks.length+1,stage:'M1'});
+    const rows=await read('1min',5000,{start_date:utcParam(chunk.start),end_date:utcParam(chunk.end-1)});
+    const inside=rows.filter(b=>b.time>=chunk.start&&b.time+60<=chunk.end);
+    // Empty calendar windows can be closed sessions; never substitute another period.
+    // A server ignoring the requested dates is a failed load, not a shorter "two weeks".
+    if(rows.length&&!inside.length)throw Error('제공처가 요청한 2주 기간 밖의 자료를 반환했습니다. 기존 연습은 유지합니다.');
+    if(!inside.length){for(let t=chunk.start;t<chunk.end;t+=60)if(tradableKST(t))throw Error('최근 2주 중 거래시간 자료가 비어 있는 기간이 있습니다. 짧은 자료로 대체하지 않았습니다.');}
+    received.push(...inside);
+  }
+  onProgress({completed:chunks.length,total:chunks.length+1,stage:'H1'});
+  const upper=await read('1h',2000,{end_date:utcParam(end-1)});
+  const n=normalize(received.filter(b=>tradableKST(b.time)),60,end),h=normalize(upper.filter(b=>tradableKST(b.time)),3600,end);
+  if(n.audit.invalid)throw Error('유효하지 않은 시세 행이 있어 최근 2주 자료를 적용하지 않았습니다.');
+  if(h.bars.length<150)throw Error('최근 2주 연습에 필요한 상위봉 준비 자료가 부족합니다. 기존 연습은 유지합니다.');
+  const exercise=n.bars.filter(b=>b.time>=start&&b.time+60<=end);
+  if(exercise.length<240)throw Error('요청한 최근 2주 기간의 실제 완료 봉이 부족합니다. 기존 연습은 유지합니다.');
+  // Boundary gaps are retained as evidence. Holidays/missing quotes are not invented.
+  const coverage={requestedStart:start,requestedEnd:end,observedStart:exercise[0].time,observedEnd:exercise.at(-1).time+60,barCount:exercise.length,chunks:chunks.length,requests:chunks.length+1,warmupStart,allChunksFetched:true};
+  onProgress({completed:chunks.length+1,total:chunks.length+1,stage:'done'});
+  return {id:`fortnight-${start}-${end}`,label:'최신 2주 실제 시세',symbol:'XAU/USD',provider:'Twelve Data',interval:60,bars:n.bars,upperBars:h.bars,audit:n.audit,calendar:'기존 게임 KST 거래시간',windowDays:14,replayStart:start,replayEnd:end,coverage,fetchedAt:new Date(now*1000).toISOString()};
+}

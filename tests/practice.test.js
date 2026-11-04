@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import {normalize,aggregate,parseCsv,indicators,decodeStored,fetchRecent,tradableKST} from '../practice-data.js';
+import {normalize,aggregate,parseCsv,indicators,decodeStored,fetchRecent,fetchFortnight,practiceBounds,practiceCoverage,packDataset,unpackDataset,tradableKST} from '../practice-data.js';
 import {buildMarket,buildTimeline,assess,MODES} from '../practice-rules.js';
 import {PaperBroker,positionSummary,splitLots} from '../practice-broker.js';
 const b=(time,o=100,h=101,l=99,c=100)=>({time,open:o,high:h,low:l,close:c,volume:1});
@@ -101,6 +101,26 @@ test('recent-data connector caps requests at 5000 and rejects incomplete latest 
 });
 test('provider failure is surfaced; it never returns generated fallback prices',async()=>{
  await assert.rejects(()=>fetchRecent('test',{fetcher:async()=>({ok:true,json:async()=>({status:'error',message:'limit reached'})})}),/limit reached/);
+});
+const fixtureQuote=time=>({datetime:new Date(time*1000).toISOString().slice(0,19).replace('T',' '),open:'100',high:'101',low:'99',close:'100',volume:'1'});
+function fortnightProvider(calls,failAt=0){return async url=>{calls.push(url);if(calls.length===failAt)return {ok:true,json:async()=>({status:'error',message:'quota reached'})};const p=new URL(url).searchParams,end=Date.parse(p.get('end_date').replace(' ','T')+'Z')/1000,isMinute=p.get('interval')==='1min',step=isMinute?60:3600,start=isMinute?Date.parse(p.get('start_date').replace(' ','T')+'Z')/1000:Math.floor(end/3600)*3600-1999*3600,values=[];for(let t=start;t<=end;t+=step)values.push(fixtureQuote(t));return {ok:true,json:async()=>({values})};};}
+test('fortnight fetch covers fourteen calendar days with bounded date chunks and separate warmup',async()=>{
+ const calls=[],progress=[],now=Date.parse('2026-11-05T04:12:45Z')/1000,d=await fetchFortnight('fixture',{fetcher:fortnightProvider(calls),now,onProgress:p=>progress.push(p)});
+ assert.equal(d.replayEnd-d.replayStart,14*86400);assert.equal(d.windowDays,14);assert.equal(calls.length,7);assert.equal(d.coverage.chunks,6);assert(d.bars[0].time<d.replayStart);assert(d.bars.every(b=>b.time+60<=d.replayEnd));
+ const m1=calls.filter(x=>new URL(x).searchParams.get('interval')==='1min');for(let i=0;i<m1.length;i++){const p=new URL(m1[i]).searchParams,s=Date.parse(p.get('start_date').replace(' ','T')+'Z')/1000,e=Date.parse(p.get('end_date').replace(' ','T')+'Z')/1000;assert(e-s<3*86400);assert.equal(p.get('outputsize'),'5000');if(i){const prev=new URL(m1[i-1]).searchParams;assert.equal(s,Date.parse(prev.get('end_date').replace(' ','T')+'Z')/1000+1);}}
+ const expected=d.bars.filter(b=>b.time>=d.replayStart);assert.equal(practiceCoverage(d).count,expected.length);assert.equal(practiceBounds(d).start,d.replayStart);assert.equal(progress.at(-1).completed,7);assert(!JSON.stringify(d).includes('apikey'));
+});
+test('failed middle page rejects the entire fortnight instead of returning the latest short slice',async()=>{
+ const calls=[];await assert.rejects(()=>fetchFortnight('fixture',{fetcher:fortnightProvider(calls,3),now:Date.parse('2026-11-05T04:12:45Z')/1000}),/quota reached/);assert.equal(calls.length,3);
+});
+test('provider ignoring fortnight dates cannot be mislabeled as fourteen-day data',async()=>{
+ await assert.rejects(()=>fetchFortnight('fixture',{fetcher:async()=>({ok:true,json:async()=>({values:[fixtureQuote(Date.parse('2026-11-05T04:00:00Z')/1000)]})}),now:Date.parse('2026-11-05T04:12:45Z')/1000}),/기간 밖/);
+});
+test('empty trading-time page is not silently replaced by another period',async()=>{
+ await assert.rejects(()=>fetchFortnight('fixture',{fetcher:async()=>({ok:true,json:async()=>({values:[]})}),now:Date.parse('2026-11-05T04:12:45Z')/1000}),/비어 있는/);
+});
+test('compact fortnight cache round-trips OHLC and requested replay limits',()=>{
+ const d={...sample(),windowDays:14,replayStart:123,replayEnd:456,coverage:{allChunksFetched:true},upperBars:[b(3600)]},packed=packDataset(d);assert(Array.isArray(packed.bars[0]));assert.deepEqual(unpackDataset(JSON.parse(JSON.stringify(packed))),d);assert(practiceCoverage(sample()).count===4140);
 });
 test('H1 zones match independently generated legacy Python reference on real provider data',()=>{
  const c={window:{}};vm.runInNewContext(fs.readFileSync(new URL('../data_practice_recent.js',import.meta.url),'utf8'),c);const d=JSON.parse(JSON.stringify(c.window.GOLD_PRACTICE_RECENT));d.bars=d.bars.filter(b=>tradableKST(b.time));d.upperBars=d.upperBars.filter(b=>tradableKST(b.time));const m=buildMarket(d);
