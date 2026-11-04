@@ -1,13 +1,13 @@
 {
-  "version": "2026-11-04-v1",
-  "checkedAtUtc": "2026-11-03T16:18:41.890619+00:00",
-  "baseCommit": "88be1db7c5ddcef98e434278d6bfcfc1a91de202",
+  "version": "2026-11-05-fortnight-v1",
+  "checkedAtUtc": "2026-11-04T16:13:44.274895+00:00",
+  "baseCommit": "be85694354be688fe35ca5b4fd04c82ca687b413",
   "unitTests": {
-    "passed": 27,
+    "passed": 32,
     "failed": 0
   },
   "browser": {
-    "passed": 42,
+    "passed": 58,
     "checks": [
       "eleven selectable modes",
       "verified actual data default",
@@ -50,6 +50,22 @@
       "legacy game training link exists",
       "existing connection passed within session",
       "provider failure preserves actual snapshot",
+      "fortnight requests fourteen days",
+      "fortnight starts at window beginning",
+      "M1 chunks and H1 requested",
+      "period and actual range visible",
+      "warmup cannot become an exercise date",
+      "packed fortnight cache restores without new API calls",
+      "cached period and source export preserved",
+      "failed chunk preserves previous period",
+      "partial failure explained",
+      "free game has a fortnight mode",
+      "free game uses two-week real-data window",
+      "free game passes two-week cache to eleven modes",
+      "Jikil retains fortnight M1 source",
+      "fortnight controls fit mobile 390",
+      "fortnight controls fit mobile 320",
+      "new-tab fortnight link connects through existing game",
       "no browser exceptions"
     ],
     "errors": [],
@@ -84,5 +100,18 @@
     "Mode 6 manual; Jikil and Benpark source checks default",
     "No claimed performance or complete TradingView runtime parity",
     "Live browser CORS not asserted by routed browser tests"
-  ]
+  ],
+  "fortnightProviderRead": {
+    "provider": "Twelve Data",
+    "symbol": "XAU/USD",
+    "fetchedAt": "2026-11-04T16:06:17.473Z",
+    "requestedStart": 1792598760,
+    "requestedEnd": 1793808360,
+    "calendarDays": 14,
+    "exerciseM1Bars": 14280,
+    "preparedM1Bars": 18246,
+    "preparedH1Bars": 1411,
+    "requests": 7,
+    "scope": "Separate live provider read; browser date-chunk tests use test-only observations."
+  }
 }
