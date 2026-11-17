@@ -45,7 +45,7 @@ function simulate(base,b,spread,path){
 }
 function comparable(s){return JSON.stringify({balance:s.balance,position:s.position,pending:s.pending,events:s.events});}
 export class PaperBroker{
- constructor({balance=1000,spread=.4}={}){this.initial=balance;this.balance=balance;this.spread=spread;this.position=null;this.pending=null;this.ambiguity=null;this.journal=[];this.assumptions=0;}
+ constructor({balance=1000,spread=.4}={}){this.initial=balance;this.balance=balance;this.spread=spread;this.position=null;this.pending=null;this.ambiguity=null;this.journal=[];this.assumptions=0;this.runId=null;}
  plan(order,time){
   if(this.balance<=0)throw Error('가상 잔고가 소진됐습니다. 이 모드에서 새 연습을 시작해 주세요.');
   if(this.position||this.pending||this.ambiguity)throw Error('현재 거래 묶음 또는 예약을 먼저 정리해 주세요.');
@@ -69,6 +69,6 @@ export class PaperBroker{
   this.pending=null;if(!this.position){this.journal.push({time,type:'cancel',reason:'예약 취소'});return;}
   const p=this.position,price=exitQuote(p,mid,this.spread),profit=unrealized(p,mid,this.spread);this.balance+=profit;this.journal.push({time,type:'close',reason,price,profit,lots:total(p),average:avg(p),entry0:p.entry0,entryTime:p.entryTime});this.position=null;
  }
- snapshot(){return {initial:this.initial,balance:this.balance,spread:this.spread,position:clone(this.position),pending:clone(this.pending),ambiguity:clone(this.ambiguity),journal:clone(this.journal),assumptions:this.assumptions};}
+ snapshot(){return {initial:this.initial,balance:this.balance,spread:this.spread,position:clone(this.position),pending:clone(this.pending),ambiguity:clone(this.ambiguity),journal:clone(this.journal),assumptions:this.assumptions,runId:this.runId??null};}
  static restore(s){const b=new PaperBroker();Object.assign(b,s);return b;}
 }

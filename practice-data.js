@@ -62,10 +62,17 @@ export function parseCsv(text,{timezone='UTC'}={}){
     return {time,open:Number(at(r,'open')),high:Number(at(r,'high')),low:Number(at(r,'low')),close:Number(at(r,'close')),volume:Number(at(r,'volume')||at(r,'tickvol')||0)};
   });return parsed;
 }
-export async function fetchRecent(key,{fetcher=fetch,now=Date.now()/1000}={}){
-  if(!key?.trim())throw Error('기존 게임의 11종 연습 버튼으로 들어오거나, 데이터 설정에 API 키를 입력해 주세요.');
-  const base='https://api.twelvedata.com/time_series?'+new URLSearchParams({symbol:'XAU/USD',apikey:key.trim(),timezone:'UTC',order:'ASC',format:'JSON'});
-  const get=async(interval,outputsize)=>{const response=await fetcher(base+'&'+new URLSearchParams({interval,outputsize:String(outputsize)}));const d=await response.json();if(!response.ok||d.status==='error'||!Array.isArray(d.values))throw Error(d.message||'시세를 받지 못했습니다. 기존 자료는 유지합니다.');return d.values.map(v=>({time:Date.parse(v.datetime.replace(' ','T')+'Z')/1000,open:+v.open,high:+v.high,low:+v.low,close:+v.close,volume:+v.volume||0}));};
+// 시세 요청 경로: proxy가 있으면 Supabase 프록시(키 없음), 없으면 사용자가 직접 넣은 키로 Twelve Data 직접 호출.
+function tdEndpoint(key,proxy,missing){
+  const common={symbol:'XAU/USD',timezone:'UTC',order:'ASC',format:'JSON'};
+  if(proxy?.url)return {base:proxy.url+'?'+new URLSearchParams(common),init:{headers:proxy.headers||{}},secret:''};
+  if(!key?.trim())throw Error(missing);
+  return {base:'https://api.twelvedata.com/time_series?'+new URLSearchParams({symbol:'XAU/USD',apikey:key.trim(),timezone:'UTC',order:'ASC',format:'JSON'}),init:{},secret:key.trim()};
+}
+const hideSecret=(msg,secret)=>secret?String(msg).split(secret).join('[숨김]'):String(msg);
+export async function fetchRecent(key,{fetcher=fetch,now=Date.now()/1000,proxy=null}={}){
+  const {base,init,secret}=tdEndpoint(key,proxy,'기존 게임의 11종 연습 버튼으로 들어오거나, 데이터 설정에 API 키를 입력해 주세요.');
+  const get=async(interval,outputsize)=>{const response=await fetcher(base+'&'+new URLSearchParams({interval,outputsize:String(outputsize)}),init);const d=await response.json();if(!response.ok||d.status==='error'||!Array.isArray(d.values))throw Error(hideSecret(d.message||'시세를 받지 못했습니다. 기존 자료는 유지합니다.',secret));return d.values.map(v=>({time:Date.parse(v.datetime.replace(' ','T')+'Z')/1000,open:+v.open,high:+v.high,low:+v.low,close:+v.close,volume:+v.volume||0}));};
   // Sequential to avoid bursts; max 5,000 records per official provider contract.
   const raw=await get('1min',5000);const upper=await get('1h',800);
   const n=normalize(raw.filter(b=>tradableKST(b.time)),60,now),h=normalize(upper.filter(b=>tradableKST(b.time)),3600,now);if(n.bars.length<240)throw Error('완료된 1분봉이 240개 미만입니다. 실제 CSV를 가져오거나 기존 표본으로 연습해 주세요.');
@@ -91,15 +98,14 @@ export function unpackDataset(data){
   const unpack=rows=>rows?.map(b=>({time:b[0],open:b[1],high:b[2],low:b[3],close:b[4],volume:b[5]||0}));
   const result={...data,bars:unpack(data.bars),upperBars:unpack(data.upperBars)};delete result.packing;return result;
 }
-export async function fetchFortnight(key,{fetcher=fetch,now=Date.now()/1000,onProgress=()=>{},signal}={}){
-  if(!key?.trim())throw Error('기존 게임의 최근 2주 버튼으로 연결하거나 데이터 설정에 API 키를 입력해 주세요.');
+export async function fetchFortnight(key,{fetcher=fetch,now=Date.now()/1000,onProgress=()=>{},signal,proxy=null}={}){
+  const {base,init,secret}=tdEndpoint(key,proxy,'기존 게임의 최근 2주 버튼으로 연결하거나 데이터 설정에 API 키를 입력해 주세요.');
   const end=Math.floor(now/60)*60,start=end-14*86400,warmupStart=start-3*86400,chunkSeconds=3*86400;
   const chunks=[];for(let cursor=warmupStart;cursor<end;cursor+=chunkSeconds)chunks.push({start:cursor,end:Math.min(cursor+chunkSeconds,end)});
-  const base='https://api.twelvedata.com/time_series?'+new URLSearchParams({symbol:'XAU/USD',apikey:key.trim(),timezone:'UTC',order:'ASC',format:'JSON'});
   const read=async(interval,outputsize,extra={})=>{
-    const response=await fetcher(base+'&'+new URLSearchParams({interval,outputsize:String(outputsize),...extra}),{signal});
+    const response=await fetcher(base+'&'+new URLSearchParams({interval,outputsize:String(outputsize),...extra}),{...init,signal});
     const d=await response.json();
-    if(!response.ok||d.status==='error'||!Array.isArray(d.values))throw Error(String(d.message||'시세를 받지 못했습니다.').split(key.trim()).join('[숨김]'));
+    if(!response.ok||d.status==='error'||!Array.isArray(d.values))throw Error(hideSecret(d.message||'시세를 받지 못했습니다.',secret));
     return d.values.map(v=>({time:Date.parse(v.datetime.replace(' ','T')+'Z')/1000,open:+v.open,high:+v.high,low:+v.low,close:+v.close,volume:+v.volume||0}));
   };
   const received=[];

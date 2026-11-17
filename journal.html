@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GOLD GAME · 내 백테스트 기록</title>
+<link rel="stylesheet" href="practice.css">
+<script src="vendor/lightweight-charts-4.1.1.js"></script>
+<style>
+ .card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:15px;margin-bottom:14px;min-width:0}
+ .row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
+ .row label{min-width:140px}
+ #code{min-width:200px}
+ .chip{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--panel2);color:var(--muted)}
+ .chip.ok{background:#173326;color:var(--green)} .chip.bad{background:#3a1f1f;color:var(--red)}
+ .kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
+ .kpi{background:var(--panel2);border-radius:8px;padding:10px 12px;min-width:0}
+ .kpi span{display:block;font-size:11px;color:var(--muted)} .kpi b{font:600 19px/1.4 var(--mono);overflow-wrap:anywhere}
+ #curve{height:240px;margin-top:6px}
+ .tbl-wrap{overflow-x:auto}
+ table{width:100%;border-collapse:collapse;font-size:12px}
+ th,td{padding:7px 8px;border-top:1px solid var(--line);text-align:right;white-space:nowrap}
+ th{color:var(--muted);font-weight:500;border-top:none}
+ th:first-child,td:first-child{text-align:left}
+ td.l{text-align:left}
+ tbody tr.mode-row{cursor:pointer} tbody tr.mode-row:hover{background:var(--panel2)}
+ .del{min-height:0;padding:2px 8px;font-size:11px}
+ .hint{font-size:12px;color:var(--muted);margin-top:8px}
+ h2{margin-bottom:10px}
+ @media(max-width:780px){.kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.kpi b{font-size:16px}#curve{height:200px}.row>label{min-width:0;flex:1 1 100%}.row select,.row input{width:100%}.row>button{flex:1}}
+</style>
+</head>
+<body>
+<header class="top"><a class="brand" href="index.html"><span class="brand-mark">G</span><span>GOLD GAME<small>내 백테스트 기록 · 나만 보기</small></span></a>
+ <div class="top-right"><a href="practice.html">11종 매매 연습</a><a href="index.html">자유 게임</a></div></header>
+<main>
+ <section class="card">
+  <h2>기록 코드</h2>
+  <div class="row">
+   <label>이 기기에 저장할 기록 코드<input id="code" type="password" autocomplete="off" placeholder="Supabase에 넣은 JOURNAL_CODE"></label>
+   <button id="save-code" class="primary">저장·확인</button>
+   <button id="forget-code" class="quiet">이 기기에서 지우기</button>
+   <span id="code-state" class="chip">확인 전</span>
+  </div>
+  <p class="hint">코드는 이 기기 브라우저에만 저장됩니다. 폰·PC 각각 한 번씩 넣으면 같은 기록을 봅니다. <span id="queue-state"></span> <button id="send-now" class="del" hidden>지금 전송</button></p>
+ </section>
+
+ <section class="card">
+  <div class="row">
+   <label>출처<select id="f-source"><option value="">전체</option><option value="practice">11종 연습</option><option value="free">자유 게임</option></select></label>
+   <label>매매법<select id="f-mode"><option value="">전체</option></select></label>
+   <button id="reload" class="quiet">새로고침</button>
+   <button id="csv" class="quiet">CSV 내보내기</button>
+  </div>
+ </section>
+
+ <section class="card">
+  <h2 id="kpi-title">전체 요약</h2>
+  <div class="kpis">
+   <div class="kpi"><span>거래 수</span><b id="k-count">—</b></div>
+   <div class="kpi"><span>승률</span><b id="k-win">—</b></div>
+   <div class="kpi"><span>총 손익</span><b id="k-total">—</b></div>
+   <div class="kpi"><span>평균 R</span><b id="k-r">—</b></div>
+   <div class="kpi"><span>손익비(PF)</span><b id="k-pf">—</b></div>
+   <div class="kpi"><span>최대 낙폭</span><b id="k-dd">—</b></div>
+  </div>
+  <div id="curve" role="img" aria-label="누적 손익 곡선"></div>
+  <p class="hint">R은 진입 전 손절을 정한 거래만 계산합니다(자유 게임은 손절 개념이 없어 제외). 누적 손익은 청산 순서대로 더한 값입니다.</p>
+ </section>
+
+ <section class="card">
+  <h2>매매법별 성적</h2>
+  <div class="tbl-wrap"><table>
+   <thead><tr><th>매매법</th><th>거래</th><th>승률</th><th>총손익</th><th>평균손익</th><th>평균R</th><th>PF</th><th>최대연패</th></tr></thead>
+   <tbody id="modes"><tr><td class="l" colspan="8">기록 코드를 설정하면 표시됩니다.</td></tr></tbody>
+  </table></div>
+  <p class="hint">행을 누르면 그 매매법만 걸러 봅니다.</p>
+ </section>
+
+ <section class="card">
+  <h2>거래 목록 <span id="list-count" class="subtle"></span></h2>
+  <div class="tbl-wrap"><table>
+   <thead><tr><th>청산 시점</th><th>매매법</th><th>방향</th><th>수량</th><th>진입</th><th>청산</th><th>손익</th><th>R</th><th class="l">사유</th><th></th></tr></thead>
+   <tbody id="trades"></tbody>
+  </table></div>
+  <button id="more" class="quiet" hidden>더 보기</button>
+ </section>
+</main>
+<div id="notice" role="status" aria-live="polite"></div>
+<script type="module" src="journal-page.js"></script>
+</body>
+</html>

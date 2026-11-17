@@ -1,12 +1,16 @@
 import {TF,TF_LABEL,normalize,decodeStored,parseCsv,fetchRecent,fetchFortnight,practiceBounds,practiceCoverage,packDataset,unpackDataset,upperBound,indicators,tradableKST} from './practice-data.js';
 import {MODES,RULE_VERSION,buildMarket,buildTimeline,contextAt,assess} from './practice-rules.js';
 import {PaperBroker,positionSummary,unrealized,splitLots} from './practice-broker.js';
+import {TD_PROXY} from './gold-config.js';
+import {enqueue,flush,practiceTrades,getCode,listBoxes} from './journal-client.js';
+import {createBoxOverlay} from './tv-boxes.js';
 const $=id=>document.getElementById(id),finite=Number.isFinite;
 const fmt=(v,n=2)=>finite(v)?v.toLocaleString('en-US',{minimumFractionDigits:n,maximumFractionDigits:n}):'—';
 const stamp=t=>new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(t*1000));
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const text=(id,value)=>$(id).textContent=value;
 let noticeTimer,market=null,dataset=null,timeline=[],session=null,charts=null,decided=false,lastPlanStamp=null,loading=false;
+let tvOverlay=null,tvLoaded=false,lastMainBars=[];
 const datasets=new Map(),memory=new Map();
 let mode=new URLSearchParams(location.search).get('mode')||'1';if(!MODES.some(m=>m.id===mode))mode='1';
 function notice(message){text('notice',message);$('notice').classList.add('on');clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>$('notice').classList.remove('on'),7000);}
@@ -15,7 +19,12 @@ const manual=()=>({direction:$('manual-direction').value,obstacle:$('manual-obst
 function clearManual(){for(const id of ['manual-direction','manual-obstacle','manual-reaction','manual-news'])$(id).value='unknown';$('manual-note').value='';}
 const isSpecial=()=>mode==='jikil'||mode==='benpark';
 function key(){const o=options();return ['gold-practice',RULE_VERSION,dataset.id,mode,$('step-tf').value,o.variant,o.jikilType,o.benType,o.setupTF,o.experimental?'experimental':'source'].join(':');}
-function persist(){if(!session)return;const value={cursor:session.cursor,broker:session.broker.snapshot(),manual:manual(),decided};memory.set(session.key,value);try{localStorage.setItem(session.key,JSON.stringify(value));}catch{notice('브라우저 저장 공간이 부족합니다. 복기를 내보내 주세요. 현재 연습은 메모리에서 계속됩니다.');}}
+function persist(){if(!session)return;if(!session.broker.runId)session.broker.runId='run-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);const value={cursor:session.cursor,broker:session.broker.snapshot(),manual:manual(),decided};memory.set(session.key,value);try{localStorage.setItem(session.key,JSON.stringify(value));}catch{notice('브라우저 저장 공간이 부족합니다. 복기를 내보내 주세요. 현재 연습은 메모리에서 계속됩니다.');}syncJournal();}
+// 청산된 거래를 개인 기록으로 (같은 청산은 한 번만). 코드가 없으면 기기에 쌓아두고 나중에 보낸다.
+let codeHintShown=false;
+function syncJournal(){try{const b=session.broker,mode=$('mode').value,m=MODES.find(x=>x.id===mode),stepTf=$('step-tf').value;
+ const list=practiceTrades(b.journal,{runId:b.runId,mode,modeLabel:m?m.name:mode,dataset:dataset?.id,stepTf,stepSec:TF[stepTf],lesson:$('lesson').value,variant:$('variant').value});
+ if(enqueue(list))flush().then(r=>{if(r.reason==='no-code'&&!codeHintShown){codeHintShown=true;notice('청산 기록을 이 기기에 보관했습니다. 내 기록 페이지에서 기록 코드를 설정하면 서버에 저장됩니다.');}}).catch(()=>{});}catch(e){console.warn('기록 동기화 실패',e);}}
 function restoreValue(k){if(memory.has(k))return memory.get(k);try{const v=JSON.parse(localStorage.getItem(k));if(v&&finite(v.cursor)&&finite(v.broker?.balance)&&Array.isArray(v.broker.journal))return v;}catch{}return null;}
 function makeCharts(){
  if(!window.LightweightCharts){notice('차트 라이브러리를 불러오지 못했습니다. 네트워크를 확인하고 새로고침해 주세요.');return null;}
@@ -43,7 +52,7 @@ function drawChart(obj,bars,follow){
 }
 function chartsRender(follow=true){
  if(!charts)return;let tf=$('view-tf').value==='auto'?$('step-tf').value:$('view-tf').value;if(!market.frames[tf])tf=$('step-tf').value;const upperTF=$('upper-tf').value,mainBars=visibleFrame(tf,session.cursor),upper=visibleFrame(upperTF,session.cursor);
- drawChart(charts.main,mainBars,follow);drawChart(charts.upper,upper,follow);
+ drawChart(charts.main,mainBars,follow);drawChart(charts.upper,upper,follow);lastMainBars=mainBars;if(tvOverlay)tvOverlay.redraw();
  const snap=contextAt(market,session.cursor).snapshot,ps=positionSummary(session.broker.position);
  if(ps)for(const [price,title,color] of [[ps.average,'평균단가','#a8b4c7'],[ps.stop,'손절','#ff837b'],[ps.target,'목표','#4ed59a']])if(finite(price))charts.main.priceLines.push(charts.main.candles.createPriceLine({price,color,lineWidth:1,lineStyle:2,axisLabelVisible:true,title}));
  for(const z of snap.zones.slice(-8))for(const price of [z.bot,z.top])charts.upper.priceLines.push(charts.upper.candles.createPriceLine({price,color:z.res?'#a66a62':'#528e75',lineWidth:1,lineStyle:2,axisLabelVisible:false,title:''}));
@@ -166,10 +175,10 @@ function order(dir){
 }
 async function recent(days=0){
  if(loading||$('recent').disabled||$('fortnight').disabled)return;const is14=days===14,btn=is14?$('fortnight'):$('recent');
- const key=$('api-key').value.trim()||sessionStorage.getItem('goldTrainingKey');
- if(is14&&!key){location.href='index.html?load=fortnight&training=1';return;}
+ // 직접 넣은 키가 있으면 그 키로, 없으면 게임 서버(Supabase) 프록시로 받는다. 키는 코드·URL·기록에 남기지 않는다.
+ const key=$('api-key').value.trim()||sessionStorage.getItem('goldTrainingKey')||'',src=key?{}:{proxy:TD_PROXY};
  $('recent').disabled=$('fortnight').disabled=true;btn.textContent='실제 시세 받는 중…';
- try{const fresh=is14?await fetchFortnight(key,{onProgress:p=>{btn.textContent=`최근 2주 ${p.completed}/${p.total}`;}}):await fetchRecent(key),id=is14?'fortnight':'recent',cache=is14?'goldTrainingFortnight':'goldTrainingRecent';datasets.set(id,fresh);if(!$('dataset').querySelector(`[value="${id}"]`))$('dataset').add(new Option(is14?'최근 2주 실제 M1':'최근 받은 실제 M1',id));try{sessionStorage.setItem(cache,JSON.stringify(packDataset(fresh)));if(key)sessionStorage.setItem('goldTrainingKey',key);}catch{notice('받은 시세는 현재 화면에서 사용합니다. 세션 저장 공간이 부족합니다.');}await selectData(id);notice(is14?'최근 14일 범위의 실제 시세를 불러왔습니다. 주말·관측 공백과 마지막 봉 시각도 표시합니다.':'받은 범위의 실제 완료 봉을 불러왔습니다. 제공처·마지막 봉 시각을 확인해 주세요.');}
+ try{const fresh=is14?await fetchFortnight(key,{...src,onProgress:p=>{btn.textContent=`최근 2주 ${p.completed}/${p.total}`;}}):await fetchRecent(key,src),id=is14?'fortnight':'recent',cache=is14?'goldTrainingFortnight':'goldTrainingRecent';datasets.set(id,fresh);if(!$('dataset').querySelector(`[value="${id}"]`))$('dataset').add(new Option(is14?'최근 2주 실제 M1':'최근 받은 실제 M1',id));try{sessionStorage.setItem(cache,JSON.stringify(packDataset(fresh)));if(key)sessionStorage.setItem('goldTrainingKey',key);}catch{notice('받은 시세는 현재 화면에서 사용합니다. 세션 저장 공간이 부족합니다.');}await selectData(id);notice(is14?'최근 14일 범위의 실제 시세를 불러왔습니다. 주말·관측 공백과 마지막 봉 시각도 표시합니다.':'받은 범위의 실제 완료 봉을 불러왔습니다. 제공처·마지막 봉 시각을 확인해 주세요.');}
  catch(e){notice('최근 데이터 연결: '+e.message+' 기존 데이터는 유지합니다.');}
  finally{$('recent').disabled=$('fortnight').disabled=false;$('recent').textContent='최근 실제 시세 받기';$('fortnight').textContent='최근 2주 연습';}
 }
@@ -192,8 +201,20 @@ function bind(){
  $('csv-file').onchange=async e=>{const file=e.target.files?.[0];if(!file)return;try{const raw=await file.text(),interval=Number($('csv-interval').value),n=normalize(parseCsv(raw,{timezone:$('csv-timezone').value}),interval,Date.now()/1000);if(n.audit.invalid)throw Error(`유효하지 않거나 미완성인 행 ${n.audit.invalid}개가 있습니다. 조용히 제외하지 않으므로 CSV를 확인해 주세요.`);if(n.bars.length<240)throw Error('완료된 실제 봉이 240개 이상 필요합니다.');if(isSpecial()&&interval!==60)throw Error('지킬·벤팍에는 실제 1분봉 CSV가 필요합니다.');const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw)))).map(x=>x.toString(16).padStart(2,'0')).join('');datasets.set('csv',{id:'csv-'+hash,label:'가져온 CSV · '+file.name,symbol:'사용자 CSV',provider:'사용자 가져오기',interval,bars:n.bars,audit:n.audit,sourceSha256:hash});if(!$('dataset').querySelector('[value="csv"]'))$('dataset').add(new Option('가져온 실제 CSV','csv'));await selectData('csv');}catch(err){notice(err.message);}finally{e.target.value='';}};
  $('export').onclick=()=>{persist();const payload={version:RULE_VERSION,mode,modeName:MODES.find(m=>m.id===mode).name,options:options(),source:{id:dataset.id,label:dataset.label,provider:dataset.provider,symbol:dataset.symbol,interval:dataset.interval,first:dataset.bars[0].time,last:dataset.bars.at(-1).time,sourceSha256:dataset.sourceSha256||null,fetchedAt:dataset.fetchedAt||null,windowDays:dataset.windowDays||null,replayStart:dataset.replayStart??null,replayEnd:dataset.replayEnd??null,coverage:dataset.coverage||null},replayTime:session.cursor,paperOnly:true,broker:session.broker.snapshot()};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download=`gold-practice-${mode}-${Date.now()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 }
+// 트레이딩뷰 박스 (구분 없이 하나의 토글) — 재생 시각 이후는 그리지 않는다
+function setupTvBoxes(){
+ if(!charts)return;
+ tvOverlay=createBoxOverlay({container:$('main-chart'),chart:charts.main.chart,series:charts.main.candles,getBars:()=>lastMainBars,getNow:()=>session?.cursor});
+ const box=$('tv-boxes');if(!box)return;
+ box.onchange=async()=>{
+  if(!box.checked){tvOverlay.setVisible(false);return;}
+  if(!getCode()){box.checked=false;notice('내 기록 페이지에서 기록 코드를 먼저 설정해 주세요.');return;}
+  tvOverlay.setVisible(true);
+  if(!tvLoaded){try{const rows=await listBoxes('XAUUSD');tvOverlay.setBoxes(rows);tvLoaded=true;notice('트레이딩뷰 박스 '+rows.length+'개를 불러왔습니다.');}catch(e){notice('박스 불러오기 실패: '+e.message);}}
+ };
+}
 async function init(){
- bind();charts=makeCharts();const s=window.GOLD_PRACTICE_M1;if(!s){notice('실제 M1 표본을 찾을 수 없습니다. 시세 파일을 확인해 주세요.');return;}
+ bind();charts=makeCharts();setupTvBoxes();flush().catch(()=>{});const s=window.GOLD_PRACTICE_M1;if(!s){notice('실제 M1 표본을 찾을 수 없습니다. 시세 파일을 확인해 주세요.');return;}
  const n=normalize(s.rows.map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]})),60);datasets.set('sample',{...s,bars:n.bars,audit:n.audit,rows:undefined});
  try{const key=sessionStorage.getItem('goldTrainingKey');if(key)$('api-key').value=key;for(const [id,cache,label] of [['recent','goldTrainingRecent','최근 받은 실제 M1'],['fortnight','goldTrainingFortnight','최근 2주 실제 M1']]){const stored=JSON.parse(sessionStorage.getItem(cache));if(stored?.bars?.length&&stored.interval===60){const fresh=unpackDataset(stored);datasets.set(id,fresh);$('dataset').add(new Option(label,id));}}}catch{}
  if(window.GOLD_PRACTICE_RECENT?.bars?.length){const verified=window.GOLD_PRACTICE_RECENT,n=normalize(verified.bars.filter(b=>tradableKST(b.time)),60);datasets.set('verified',{...verified,id:verified.id+'-kst',label:'확인된 최근 실제 시세 스냅샷 · 기존 게임 KST 필터',bars:n.bars,upperBars:verified.upperBars.filter(b=>tradableKST(b.time)),audit:n.audit});$('dataset').add(new Option('확인된 최근 실제 M1','verified'));}
