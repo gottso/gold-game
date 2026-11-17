@@ -110,6 +110,15 @@ test('fortnight fetch covers fourteen calendar days with bounded date chunks and
  const m1=calls.filter(x=>new URL(x).searchParams.get('interval')==='1min');for(let i=0;i<m1.length;i++){const p=new URL(m1[i]).searchParams,s=Date.parse(p.get('start_date').replace(' ','T')+'Z')/1000,e=Date.parse(p.get('end_date').replace(' ','T')+'Z')/1000;assert(e-s<3*86400);assert.equal(p.get('outputsize'),'5000');if(i){const prev=new URL(m1[i-1]).searchParams;assert.equal(s,Date.parse(prev.get('end_date').replace(' ','T')+'Z')/1000+1);}}
  const expected=d.bars.filter(b=>b.time>=d.replayStart);assert.equal(practiceCoverage(d).count,expected.length);assert.equal(practiceBounds(d).start,d.replayStart);assert.equal(progress.at(-1).completed,7);assert(!JSON.stringify(d).includes('apikey'));
 });
+test('server proxy path sends no API key and forwards the proxy headers',async()=>{
+ const calls=[],inits=[],provider=fortnightProvider(calls),now=Date.parse('2026-11-05T04:12:45Z')/1000;
+ const proxy={url:'https://example.supabase.co/functions/v1/td-proxy',headers:{apikey:'anon',Authorization:'Bearer anon'}};
+ const d=await fetchFortnight(null,{proxy,now,fetcher:async(url,init)=>{inits.push(init);return provider(url);}});
+ assert.equal(calls.length,7);assert(calls.every(u=>u.startsWith(proxy.url+'?')&&!u.includes('apikey')));assert(inits.every(i=>i.headers.Authorization==='Bearer anon'));assert.equal(d.windowDays,14);
+ const rc=[];await fetchRecent(null,{proxy,now:Date.parse('2026-10-20T05:00:00Z')/1000,fetcher:async(url,init)=>{rc.push([url,init]);const min=url.includes('interval=1min'),t0=Date.parse('2026-10-20T00:00:00Z')/1000;return {ok:true,json:async()=>({values:Array.from({length:min?300:200},(_,i)=>fixtureQuote(t0+i*(min?60:3600)))})};}});
+ assert(rc.every(([u,i])=>!u.includes('apikey')&&i.headers.apikey==='anon'));
+ await assert.rejects(()=>fetchRecent(null,{}),/API 키/);
+});
 test('failed middle page rejects the entire fortnight instead of returning the latest short slice',async()=>{
  const calls=[];await assert.rejects(()=>fetchFortnight('fixture',{fetcher:fortnightProvider(calls,3),now:Date.parse('2026-11-05T04:12:45Z')/1000}),/quota reached/);assert.equal(calls.length,3);
 });

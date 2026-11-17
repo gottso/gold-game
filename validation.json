@@ -1,13 +1,13 @@
 {
-  "version": "2026-11-05-fortnight-v1",
-  "checkedAtUtc": "2026-11-04T16:13:44.274895+00:00",
-  "baseCommit": "be85694354be688fe35ca5b4fd04c82ca687b413",
+  "version": "2026-11-18-proxy-journal-v1",
+  "checkedAtUtc": "2026-11-17T15:23:54.366405+00:00",
+  "baseCommit": "ac0b4a3",
   "unitTests": {
-    "passed": 32,
+    "passed": 42,
     "failed": 0
   },
   "browser": {
-    "passed": 58,
+    "passed": 59,
     "checks": [
       "eleven selectable modes",
       "verified actual data default",
@@ -48,8 +48,9 @@
       "no mobile overflow 390",
       "no mobile overflow 320",
       "legacy game training link exists",
-      "existing connection passed within session",
+      "no API key handed between pages",
       "provider failure preserves actual snapshot",
+      "recent quotes go through server proxy without a key",
       "fortnight requests fourteen days",
       "fortnight starts at window beginning",
       "M1 chunks and H1 requested",
@@ -65,7 +66,7 @@
       "Jikil retains fortnight M1 source",
       "fortnight controls fit mobile 390",
       "fortnight controls fit mobile 320",
-      "new-tab fortnight link connects through existing game",
+      "new-tab fortnight loads through server proxy",
       "no browser exceptions"
     ],
     "errors": [],

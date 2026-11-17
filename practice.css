@@ -4,3 +4,4 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 .chart-credit{font-size:11px;color:var(--muted);text-align:right;margin-top:18px}.chart-credit a{color:var(--muted)}
 @media(max-width:780px){.workspace{display:flex;flex-direction:column;gap:14px}.charts-column,aside{display:contents}.chart-card,.account,.decision-card,.order-settings,.rule-card,.journal-box{width:100%}.charts-column>.chart-card:first-child{order:0}.decision-card{order:1}.account{order:2}.order-settings{order:3}.charts-column>.chart-card:nth-child(2){order:4}.journal-box{order:5}.rule-card{order:6}input,select{font-size:16px}.chart-heading label select{font-size:12px}#main-chart,#upper-chart{overflow:hidden}}
+.tv-toggle{flex-direction:row;align-items:center;gap:5px;color:#ffb74d;font-size:11px;margin-left:auto}

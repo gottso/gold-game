@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>XAUUSD 선물 리플레이</title>
-<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+<script src="vendor/lightweight-charts-4.1.1.js"></script>
 <style>
   :root{
     --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2a3340;
@@ -146,6 +146,7 @@
   .lb-empty{color:var(--mut);font-size:12px;text-align:center;padding:14px 0}
 
   #btnLive,#btnLive14{background:#1f6feb;color:#fff;border:none;border-radius:7px;padding:8px 12px;font-size:12.5px;font-weight:600;white-space:nowrap}
+  #btnJournal{display:inline-block;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:8px 12px;font-size:12.5px;font-weight:600;text-decoration:none;white-space:nowrap}
   #btnPractice{display:inline-block;background:#e8b84b;color:#1a1a1a;border-radius:7px;padding:8px 12px;font-size:12.5px;font-weight:600;text-decoration:none;white-space:nowrap}
   #liveBanner{display:none;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap;
     background:rgba(31,111,235,.14);border:1px solid rgba(31,111,235,.4);color:#9fc1ff;
@@ -351,6 +352,7 @@
         <button class="tgl" data-tg="smcSig">전략신호</button>
         <button class="tgl" data-tg="vrvp">VRVP(매물대)</button>
         <button class="tgl" data-tg="sess">시가박스(세션)</button>
+        <button class="tgl" data-tg="tvbox">TV 박스</button>
       </div>
       <div class="smc-credit">SMC 로직 © LuxAlgo · CC BY-NC-SA 4.0</div>
     </div>
@@ -410,6 +412,7 @@
         <button id="btnLive" title="최근 7일 실데이터를 받아 복습">📡 최근 7일</button>
         <button id="btnLive14" title="최신 14일 실제 시세를 받아 연습">최근 2주</button>
         <a id="btnPractice" href="practice.html?source=recent">11종 매매 연습</a>
+        <a id="btnJournal" href="journal.html">📒 내 기록</a>
       </span>
     </div>
     <div id="liveBanner">📡 <span id="liveWindowLabel">최근 7일 복습 모드</span> · <span id="liveAt"></span> · 순위표 미기록 <button id="btnExitLive">일반 모드로</button></div>
@@ -752,7 +755,7 @@ try {
   const OB_BEAR_F='rgba(242,54,69,.14)',  OB_BEAR_B='rgba(242,54,69,.55)';
   const FVG_BULL='rgba(0,170,95,.14)',    FVG_BEAR='rgba(242,54,69,.12)';
   const ZONE_F='rgba(0,150,136,.13)', ZONE_B='rgba(0,150,136,.5)';   // 매물대(teal)
-  const ZONE_LEN=10, ZONE_MERGE=0.5, ZONE_EXT=30, ZONE_MAXDRAW=25;   // Pine: zoneLen/mergeKTR/zoneExtend/maxDrawZones
+  const ZONE_LEN=10, ZONE_MERGE=0.5, ZONE_EXT=30, ZONE_TRACK=60, ZONE_NEAR=4;   // Pine: zoneLen/mergeKTR/maxZones · 현재가 위·아래 각 4개 표시
   const PAT_LEN=5, PAT_TOL=0.5, PAT_MAXDRAW=8;                        // Pine: patLen/tolKTR/maxPats
   const PAT_COL='#d500f9', PAT_NECK='rgba(150,150,150,.85)', PAT_MM_F='rgba(213,0,249,.10)', PAT_MM_B='rgba(213,0,249,.45)';
   const SIG_BUY='#00c853', SIG_SELL='#e0524a';
@@ -1110,10 +1113,14 @@ try {
         }
       }
     }
-    // 매물대 (최근 25개, 현재 봉까지 연장)
+    // 매물대: 추적 60개 중 현재가 위·아래로 가까운 것만 (현재 봉까지 연장)
     if(smc.zone){
-      const z0=Math.max(0,zoneN-ZONE_MAXDRAW);
+      const px=allData[idx-1].close, z0=Math.max(0,zoneN-ZONE_TRACK);
+      const above=[],below=[];
       for(let k=z0;k<zoneN;k++){const z=allZones[k];
+        if(z.bot>px)above.push(z); else if(z.top<px)below.push(z); else above.unshift(z);}   // 현재가 포함 구간은 항상 표시
+      above.sort((a,b)=>a.bot-b.bot); below.sort((a,b)=>b.top-a.top);
+      for(const z of above.slice(0,ZONE_NEAR).concat(below.slice(0,ZONE_NEAR))){
         let top=z.top,bot=z.bot; if(top===bot){top+=0.05;bot-=0.05;}   // 레벨(돌파)은 얇게
         drawBox(z.leftTime,rightT,top,bot,ZONE_F,ZONE_B,z.typ);
       }
@@ -1128,13 +1135,14 @@ try {
         for(const pt of P.pts){const x=X(pt.time),y=Y(pt.price);
           if(x==null||y==null){started=false;continue;} if(!started){sctx.moveTo(x,y);started=true;}else sctx.lineTo(x,y);}
         sctx.stroke();
-        // 넥라인 (현재까지 점선)
-        const nlt=Math.max(P.pts[0].time,vr.from), nrt=Math.min(rightT,vr.to);
+        // 넥라인 (Pine: 확정 후 10봉까지 점선, 공개된 봉까지만)
+        const tAt=n=>allData[Math.min(P.knownIdx+n,idx-1)].time;
+        const nlt=Math.max(P.pts[0].time,vr.from), nrt=Math.min(tAt(10),vr.to);
         const nx1=X(nlt),nx2=X(nrt),ny=Y(P.neck);
-        if(nx1!=null&&nx2!=null&&ny!=null){sctx.setLineDash([4,3]);sctx.strokeStyle=PAT_NECK;sctx.lineWidth=1;
+        if(nrt>=nlt&&nx1!=null&&nx2!=null&&ny!=null){sctx.setLineDash([4,3]);sctx.strokeStyle=PAT_NECK;sctx.lineWidth=1;
           sctx.beginPath();sctx.moveTo(nx1,ny);sctx.lineTo(nx2,ny);sctx.stroke();sctx.setLineDash([]);}
-        // 목표(measured move) 박스
-        drawBox(P.confTime,rightT,Math.max(P.neck,P.mm),Math.min(P.neck,P.mm),PAT_MM_F,PAT_MM_B);
+        // 목표(measured move) 박스 (Pine: 확정 후 15봉 폭)
+        drawBox(P.confTime,tAt(15),Math.max(P.neck,P.mm),Math.min(P.neck,P.mm),PAT_MM_F,PAT_MM_B);
         // 라벨
         const lx=X(P.labTime),ly=Y(P.labPrice);
         if(lx!=null&&ly!=null){sctx.fillStyle=PAT_COL;sctx.font='10px sans-serif';sctx.textAlign='center';
@@ -1180,9 +1188,12 @@ try {
       }
       // 미니 통계 (좌상단)
       const tot=wins+losses;
-      sctx.fillStyle='rgba(20,22,28,.8)';sctx.fillRect(6,6,146,20);
+      // PC 드로잉 툴바가 보이면 그 아래로 내려서 겹치지 않게
+      const dtb=document.getElementById('draw-tools');
+      const sy=(dtb&&dtb.offsetParent)?dtb.offsetTop+dtb.offsetHeight+6:6;
+      sctx.fillStyle='rgba(20,22,28,.8)';sctx.fillRect(6,sy,146,20);
       sctx.fillStyle='#e8e8e8';sctx.font='11px sans-serif';sctx.textAlign='left';sctx.textBaseline='middle';
-      sctx.fillText(`전략 ${tot}전 ${wins}승 ${losses}패`+(tot?` (${(wins/tot*100).toFixed(0)}%)`:''),12,16);
+      sctx.fillText(`전략 ${tot}전 ${wins}승 ${losses}패`+(tot?` (${(wins/tot*100).toFixed(0)}%)`:''),12,sy+10);
     }
     if(smc.bos){
       sctx.lineWidth=1; sctx.font='10px sans-serif'; sctx.textBaseline='middle'; sctx.textAlign='center';
@@ -1286,6 +1297,25 @@ try {
   })();
 
   // --- 보조지표 표시 토글 ---
+  // ===== 트레이딩뷰 박스 + 개인 백테스트 기록 =====
+  let JC=null, tvOverlay=null, tvLoaded=false, curViewBars=null;
+  const freeBuffer=[];                                   // 기록 모듈이 뜨기 전 청산분 보관
+  const RUN_ID='free:'+(LIVE?'live':'h')+':'+SEED+':'+Date.now().toString(36);
+  const DATASET=LIVE?(liveRaw&&liveRaw.windowDays===14?'live-14d':'live-7d'):'history-h1';
+  async function loadTvBoxes(){
+    if(!JC||!tvOverlay){toast('잠시 후 다시 눌러줘',true);return;}
+    if(!JC.getCode()){toast('📒 내 기록 페이지에서 기록 코드를 먼저 설정해줘',true);return;}
+    try{const rows=await JC.listBoxes('XAUUSD');tvOverlay.setBoxes(rows);tvLoaded=true;tvOverlay.setVisible(tg.tvbox.on);
+      toast('트레이딩뷰 박스 '+rows.length+'개');}
+    catch(e){toast('박스 불러오기 실패: '+e.message,true);}
+  }
+  function recordFree(p,mid,reason){
+    const t={p,ex:exitPx(p,mid),entryTime:allData[p.entryIdx].time,exitTime:allData[idx-1].time,reason,barsHeld:Math.max(0,(idx-1)-p.entryIdx)};
+    if(!JC){freeBuffer.push(t);return;}
+    JC.enqueue([JC.freeTrade(t.p,{runId:RUN_ID,exitPrice:t.ex,entryTime:t.entryTime,exitTime:t.exitTime,reason:t.reason,barsHeld:t.barsHeld,dataset:DATASET,
+      meta:{seed:SEED,lev:st.lev,spread:SPREAD,entryMode}})]);
+    JC.flush().catch(()=>{});
+  }
   const tg={
     ma:  {on:false,fn:v=>[sma20,sma60,sma120].forEach(s=>s.applyOptions({visible:v}))},
     bb:  {on:false,fn:v=>[bbUp,bbLow].forEach(s=>s.applyOptions({visible:v}))},
@@ -1304,7 +1334,8 @@ try {
     smcPat:  {on:false,fn:v=>{smc.pat=v;drawSMC();}},
     smcSig:  {on:false,fn:v=>{smc.sig=v;drawSMC();}},
     vrvp:    {on:false,fn:v=>{smc.vrvp=v;drawSMC();}},
-    sess:    {on:false,fn:v=>{smc.sess=v;drawSMC();}}
+    sess:    {on:false,fn:v=>{smc.sess=v;drawSMC();}},
+    tvbox:   {on:false,fn:v=>{if(!tvOverlay)return;tvOverlay.setVisible(v);if(v&&!tvLoaded)loadTvBoxes();}}
   };
 
   // ===================== 5. 초기 표시 =====================
@@ -1334,6 +1365,7 @@ try {
   function renderTF(tf){
     const bars=HIGHER[tf]?resampleHigher(idx,tf):sliceLower(tf);
     if(!bars.length)return;
+    curViewBars=bars;
     candleSeries.setData(bars);
     const I=basicInd(bars);
     const mp=a=>{const o=[];for(let i=0;i<bars.length;i++)if(a[i]!=null)o.push({time:bars[i].time,value:a[i]});return o;};
@@ -1347,7 +1379,7 @@ try {
     chart.timeScale().setVisibleLogicalRange({from:Math.max(0,wl-VISIBLE),to:wl});
     drawSMC();                                                          // non-1h → 캔버스 클리어
   }
-  function drawView(){ viewTF==='1h'?render1H():renderTF(viewTF); if(typeof drawTools==='function')drawTools(); }
+  function drawView(){ viewTF==='1h'?render1H():renderTF(viewTF); if(typeof drawTools==='function')drawTools(); if(tvOverlay)tvOverlay.redraw(); }
   function updateTFLabel(){const el=document.getElementById('tfLabel');if(el)el.textContent=TF_LABEL[viewTF];
     document.querySelectorAll('.tf-seg').forEach(b=>b.classList.toggle('on',b.dataset.tf===viewTF));}
   function tfBusy(b){const el=document.getElementById('tfBusy');if(el)el.style.display=b?'flex':'none';}
@@ -1416,13 +1448,13 @@ try {
   function closePos(id){
     const mid=curPrice(),i=st.positions.findIndex(p=>p.id===id);
     if(i<0)return;const p=st.positions[i];
-    st.balance+=posPnL(p,mid);
+    st.balance+=posPnL(p,mid);recordFree(p,mid,'수동 청산');
     if(p.line)candleSeries.removePriceLine(p.line);
     st.positions.splice(i,1);render(); syncMarkers();
   }
   function closeAll(){
     const mid=curPrice();
-    st.positions.forEach(p=>{st.balance+=posPnL(p,mid);if(p.line)candleSeries.removePriceLine(p.line);});
+    st.positions.forEach(p=>{st.balance+=posPnL(p,mid);recordFree(p,mid,'전체 청산');if(p.line)candleSeries.removePriceLine(p.line);});
     st.positions=[];st.pending=[];render(); syncMarkers();
   }
   function checkLiq(c){
@@ -1431,7 +1463,7 @@ try {
     if(net===0)return;
     const worst=net>0?c.low:c.high;
     if(st.balance+totPnL(worst)<=0){
-      st.positions.forEach(p=>{st.balance+=posPnL(p,worst);if(p.line)candleSeries.removePriceLine(p.line);});
+      st.positions.forEach(p=>{st.balance+=posPnL(p,worst);recordFree(p,worst,'마진콜');if(p.line)candleSeries.removePriceLine(p.line);});
       st.balance=Math.max(0,st.balance);st.positions=[];
       st.busted=st.balance<=0;
       toast('⚠ 마진콜 — 전체 강제청산',true);
@@ -1461,7 +1493,7 @@ try {
     checkLiq(c);
     idx++;processDiv(idx-1);revealSMC(idx-1);
     if(viewTF==='1h')drawSMC(); else drawView();   // 보는 TF면 뷰 재구성(현재 T까지)
-    render();setMine();
+    render();setMine();if(tvOverlay)tvOverlay.redraw();
     if(idx-START>=50&&!st.submitted&&!LIVE)submitScore('50턴');
   }
 
@@ -1537,16 +1569,17 @@ try {
       +'&bal='+bal+'&em='+entryMode+'&sp='+(SPREAD>0?1:0);};
 
   // 최근 7일 복습 모드
-  const TD_KEY='8c577309539e4f60867b725ac8a24104';
+  // 시세는 Supabase 프록시(td-proxy)로 받는다 — Twelve Data 키는 서버 비밀값에만 있음
+  const TD_PROXY={url:SB_URL+'/functions/v1/td-proxy',headers:SB_H};
   async function fetchLive(){
     const btn=document.getElementById('btnLive');
     btn.disabled=true; const old=btn.textContent; btn.textContent='받는 중…';
     toast('최근 7일 데이터 받는 중…');
     try{
-      const base='https://api.twelvedata.com/time_series?apikey='+TD_KEY+'&symbol=XAU/USD&timezone=UTC&order=ASC&format=JSON';
+      const base=TD_PROXY.url+'?';
       const [r1,r5]=await Promise.all([
-        fetch(base+'&interval=1h&outputsize=800').then(r=>r.json()),
-        fetch(base+'&interval=5min&outputsize=2100').then(r=>r.json())
+        fetch(base+'interval=1h&outputsize=800',{headers:TD_PROXY.headers}).then(r=>r.json()),
+        fetch(base+'interval=5min&outputsize=2100',{headers:TD_PROXY.headers}).then(r=>r.json())
       ]);
       if(r1.status==='error')throw new Error(r1.message||'1h 오류');
       if(r5.status==='error')throw new Error(r5.message||'5m 오류');
@@ -1566,8 +1599,8 @@ try {
     const btn=document.getElementById('btnLive14'),other=document.getElementById('btnLive'),old=btn.textContent;if(btn.disabled||other.disabled)return;btn.disabled=other.disabled=true;btn.textContent='2주 받는 중…';
     try{
       const {fetchFortnight,packDataset,aggregate}=await import('./practice-data.js');
-      const fresh=await fetchFortnight(TD_KEY,{onProgress:p=>{btn.textContent=`최근 2주 ${p.completed}/${p.total}`;}});
-      sessionStorage.setItem('goldTrainingFortnight',JSON.stringify(packDataset(fresh)));sessionStorage.setItem('goldTrainingKey',TD_KEY);
+      const fresh=await fetchFortnight(null,{proxy:TD_PROXY,onProgress:p=>{btn.textContent=`최근 2주 ${p.completed}/${p.total}`;}});
+      sessionStorage.setItem('goldTrainingFortnight',JSON.stringify(packDataset(fresh)));
       if(training){location.href='practice.html?source=fortnight&cache=1';return;}
       const conv=b=>({t:b.time,o:b.open,h:b.high,l:b.low,c:b.close,v:b.volume||0});
       const h1=fresh.upperBars.map(conv),m5=aggregate(fresh.bars,60,300).map(conv);
@@ -1577,10 +1610,6 @@ try {
     }catch(e){btn.disabled=other.disabled=false;btn.textContent=old;toast('최근 2주 로드 실패: '+(e.message||e)+' 기존 연습을 유지합니다.',true);}
   }
   document.getElementById('btnLive14').onclick=()=>fetchLive14(false);
-  // Reuse the existing connection only in this tab's session; never put the key in a URL or journal.
-  document.getElementById('btnPractice').addEventListener('click',()=>{
-    try{sessionStorage.setItem('goldTrainingKey',TD_KEY);}catch(e){}
-  });
   document.getElementById('btnExitLive').onclick=()=>{
     const u=new URL(location.href); u.searchParams.delete('live'); location.href=u.toString();};
   if(LIVE){
@@ -1646,6 +1675,17 @@ try {
   // 모든 보조지표 초기 상태 적용 (기본 전부 꺼짐)
   document.querySelectorAll('#tgls .tgl').forEach(b=>{const t=tg[b.dataset.tg];if(t)b.classList.toggle('on',t.on);});
   Object.keys(tg).forEach(k=>tg[k].fn(tg[k].on));
+  import('./journal-client.js').then(m=>{
+    JC=m;
+    for(const t of freeBuffer.splice(0))JC.enqueue([JC.freeTrade(t.p,{runId:RUN_ID,exitPrice:t.ex,entryTime:t.entryTime,exitTime:t.exitTime,reason:t.reason,barsHeld:t.barsHeld,dataset:DATASET,meta:{seed:SEED,lev:st.lev,spread:SPREAD,entryMode}})]);
+    JC.flush().catch(()=>{});
+  }).catch(e=>console.warn('기록 모듈 로드 실패',e));
+  import('./tv-boxes.js').then(m=>{
+    tvOverlay=m.createBoxOverlay({container:document.getElementById('chart-container'),chart,series:candleSeries,zIndex:3,
+      getBars:()=>viewTF==='1h'?allData.slice(Math.max(0,idx-HIST),idx):(curViewBars||[]),
+      getNow:()=>allData[idx-1].time+3600});
+    if(tg.tvbox.on){tvOverlay.setVisible(true);loadTvBoxes();}
+  }).catch(e=>console.warn('박스 모듈 로드 실패',e));
 
   // ===================== 순위표 로직 =====================
   const nickEl=document.getElementById('nickInput');
