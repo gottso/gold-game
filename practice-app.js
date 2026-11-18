@@ -4,6 +4,7 @@ import {PaperBroker,positionSummary,unrealized,splitLots} from './practice-broke
 import {TD_PROXY} from './gold-config.js';
 import {enqueue,flush,practiceTrades,getCode,listBoxes} from './journal-client.js';
 import {createBoxOverlay} from './tv-boxes.js';
+import {attachAxisControl} from './axis-control.js';
 const $=id=>document.getElementById(id),finite=Number.isFinite;
 const fmt=(v,n=2)=>finite(v)?v.toLocaleString('en-US',{minimumFractionDigits:n,maximumFractionDigits:n}):'—';
 const stamp=t=>new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(t*1000));
@@ -31,7 +32,10 @@ function makeCharts(){
  function make(id){const el=$(id),chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:el.clientHeight,layout:{background:{color:'#161b22'},textColor:'#a3afbf',fontFamily:'Segoe UI, Malgun Gothic, sans-serif'},grid:{vertLines:{color:'#202833'},horzLines:{color:'#202833'}},rightPriceScale:{borderColor:'#2a3340'},timeScale:{borderColor:'#2a3340',timeVisible:true,secondsVisible:false,rightOffset:4},localization:{timeFormatter:t=>stamp(Number(t))},crosshair:{mode:LightweightCharts.CrosshairMode.Normal}});
   const candles=chart.addCandlestickSeries({upColor:'#37b47d',downColor:'#e56f68',borderVisible:false,wickUpColor:'#37b47d',wickDownColor:'#e56f68'}),lines={};
   for(const [name,color] of [['sma20','#76a4ff'],['sma60','#f7b35c'],['sma120','#c29af0'],['bb20Up','#6c7c8e'],['bb20Low','#6c7c8e'],['bb4Up','#b7a975'],['bb4Low','#b7a975']])lines[name]=chart.addLineSeries({color,lineWidth:name.startsWith('sma')?2:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
-  new ResizeObserver(()=>chart.resize(el.clientWidth,el.clientHeight)).observe(el);return {chart,candles,lines,priceLines:[]};
+  new ResizeObserver(()=>chart.resize(el.clientWidth,el.clientHeight)).observe(el);
+  // 가로·세로 따로 조절: 오른쪽 아래 '자동/고정' 버튼, 가격 숫자 칸 휠·끌기 = 세로만, 폰 위아래 두 손가락 = 세로만
+  const axis=attachAxisControl({chart,container:el,series:[candles,...Object.values(lines)],theme:'dark',onChange:()=>{if(id==='main-chart'&&tvOverlay)tvOverlay.redraw();}});
+  return {chart,candles,lines,priceLines:[],axis,view:null};
  }
  return {main:make('main-chart'),upper:make('upper-chart')};
 }
@@ -44,15 +48,22 @@ function visibleFrame(tf,time){
  const partial={time:start,open:raw[0].open,high:Math.max(...raw.map(b=>b.high)),low:Math.min(...raw.map(b=>b.low)),close:raw.at(-1).close,volume:raw.reduce((s,b)=>s+b.volume,0),end:start+sec,complete:false};
  const recent=indicators([...completed.slice(-125),partial]);return [...completed,recent.at(-1)];
 }
-function drawChart(obj,bars,follow){
+function drawChart(obj,bars,follow,key){
+ // key = 데이터·봉 간격. 같으면 사용자가 맞춘 가로 폭을 유지하고, 바뀌면 가로·세로를 처음 상태로 되돌린다.
+ const ts=obj.chart.timeScale(),prev=ts.getVisibleLogicalRange(),same=!!obj.view&&obj.view.key===key;
+ if(!same&&obj.axis)obj.axis.reset();
  obj.candles.setData(bars.map(({time,open,high,low,close})=>({time,open,high,low,close})));
  for(const [k,line] of Object.entries(obj.lines))line.setData(bars.filter(b=>finite(b[k])).map(b=>({time:b.time,value:b[k]})));
- if(follow&&bars.length)obj.chart.timeScale().setVisibleLogicalRange({from:Math.max(0,bars.length-85),to:bars.length+3});
+ if(follow&&bars.length){
+  if(same&&prev){const w=prev.to-prev.from,gap=Math.max(0,prev.to-obj.view.len);ts.setVisibleLogicalRange({from:bars.length+gap-w,to:bars.length+gap});}
+  else ts.setVisibleLogicalRange({from:Math.max(0,bars.length-85),to:bars.length+3});
+ }
+ obj.view={key,len:bars.length};
  for(const l of obj.priceLines)obj.candles.removePriceLine(l);obj.priceLines=[];
 }
 function chartsRender(follow=true){
  if(!charts)return;let tf=$('view-tf').value==='auto'?$('step-tf').value:$('view-tf').value;if(!market.frames[tf])tf=$('step-tf').value;const upperTF=$('upper-tf').value,mainBars=visibleFrame(tf,session.cursor),upper=visibleFrame(upperTF,session.cursor);
- drawChart(charts.main,mainBars,follow);drawChart(charts.upper,upper,follow);lastMainBars=mainBars;if(tvOverlay)tvOverlay.redraw();
+ drawChart(charts.main,mainBars,follow,dataset.id+'|'+tf);drawChart(charts.upper,upper,follow,dataset.id+'|'+upperTF);lastMainBars=mainBars;if(tvOverlay)tvOverlay.redraw();
  const snap=contextAt(market,session.cursor).snapshot,ps=positionSummary(session.broker.position);
  if(ps)for(const [price,title,color] of [[ps.average,'평균단가','#a8b4c7'],[ps.stop,'손절','#ff837b'],[ps.target,'목표','#4ed59a']])if(finite(price))charts.main.priceLines.push(charts.main.candles.createPriceLine({price,color,lineWidth:1,lineStyle:2,axisLabelVisible:true,title}));
  for(const z of snap.zones.slice(-8))for(const price of [z.bot,z.top])charts.upper.priceLines.push(charts.upper.candles.createPriceLine({price,color:z.res?'#a66a62':'#528e75',lineWidth:1,lineStyle:2,axisLabelVisible:false,title:''}));
