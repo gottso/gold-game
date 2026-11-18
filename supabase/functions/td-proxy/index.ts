@@ -1,9 +1,13 @@
 // Twelve Data 시세 프록시 — API 키는 Supabase 비밀값(TWELVE_DATA_KEY)에만 있고 브라우저로 나가지 않는다.
-// 허용: XAU/USD time_series, 정해진 봉 간격, gottso.github.io·로컬 개발 출처만.
+// 허용: XAU/USD time_series, 정해진 봉 간격, gottso.github.io·xaugame.vercel.app·로컬 개발 출처만.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 const INTERVALS = new Set(["1min", "5min", "15min", "30min", "1h"]);
-const ORIGINS = [/^https:\/\/gottso\.github\.io$/, /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/];
+const ORIGINS = [
+  /^https:\/\/gottso\.github\.io$/,
+  /^https:\/\/(xaugame|goldgame-nine)\.vercel\.app$/,
+  /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/,
+];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/;
 const TTL_MS = 60_000; // 같은 요청은 1분간 재사용 → 무료 한도(분당 8회) 절약
 const cache = new Map<string, { t: number; body: string }>();

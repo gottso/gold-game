@@ -3,7 +3,11 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const ORIGINS = [/^https:\/\/gottso\.github\.io$/, /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/];
+const ORIGINS = [
+  /^https:\/\/gottso\.github\.io$/,
+  /^https:\/\/(xaugame|goldgame-nine)\.vercel\.app$/,
+  /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/,
+];
 const allowed = (o: string) => ORIGINS.some((r) => r.test(o));
 const cors = (o: string) => ({
   "Access-Control-Allow-Origin": allowed(o) ? o : "https://gottso.github.io",
