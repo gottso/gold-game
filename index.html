@@ -1299,6 +1299,8 @@ try {
   // --- 보조지표 표시 토글 ---
   // ===== 트레이딩뷰 박스 + 개인 백테스트 기록 =====
   let JC=null, tvOverlay=null, tvLoaded=false, curViewBars=null;
+  let axisCtl=null;                                      // 가로·세로 따로 조절 (axis-control.js)
+  let tfView=null;                                       // 1시간봉 외 TF: {tf,len} — 다음 봉 때 가로 폭 유지용
   const freeBuffer=[];                                   // 기록 모듈이 뜨기 전 청산분 보관
   const RUN_ID='free:'+(LIVE?'live':'h')+':'+SEED+':'+Date.now().toString(36);
   const DATASET=LIVE?(liveRaw&&liveRaw.windowDays===14?'live-14d':'live-7d'):'history-h1';
@@ -1360,11 +1362,13 @@ try {
     divSeries.forEach(s=>s.applyOptions({visible:tg.div.on}));
     rsiLine.setMarkers(tg.div.on?rsiMarkers:[]);
     chart.timeScale().setVisibleLogicalRange({from:wl-VISIBLE,to:wl});
+    tfView=null;
     drawSMC();
   }
   function renderTF(tf){
     const bars=HIGHER[tf]?resampleHigher(idx,tf):sliceLower(tf);
     if(!bars.length)return;
+    const prevRange=chart.timeScale().getVisibleLogicalRange();          // 다시 그리기 전 가로 범위
     curViewBars=bars;
     candleSeries.setData(bars);
     const I=basicInd(bars);
@@ -1376,7 +1380,12 @@ try {
     refreshMarkers(bars[0].time,bars[bars.length-1].time);              // 진입 마커는 모든 TF
     divSeries.forEach(s=>s.applyOptions({visible:false})); rsiLine.setMarkers([]);
     const wl=bars.length;
-    chart.timeScale().setVisibleLogicalRange({from:Math.max(0,wl-VISIBLE),to:wl});
+    if(tfView&&tfView.tf===tf&&prevRange){
+      // 같은 TF에서 다음 봉: 사용자가 맞춘 가로 폭과 오른쪽 여백을 그대로 두고 끝을 따라간다 (1시간봉과 같은 방식)
+      const w=prevRange.to-prevRange.from,gap=Math.max(0,prevRange.to-tfView.len);
+      chart.timeScale().setVisibleLogicalRange({from:wl+gap-w,to:wl+gap});
+    } else chart.timeScale().setVisibleLogicalRange({from:Math.max(0,wl-VISIBLE),to:wl});
+    tfView={tf,len:wl};
     drawSMC();                                                          // non-1h → 캔버스 클리어
   }
   function drawView(){ viewTF==='1h'?render1H():renderTF(viewTF); if(typeof drawTools==='function')drawTools(); if(tvOverlay)tvOverlay.redraw(); }
@@ -1387,7 +1396,7 @@ try {
     if(!TF_DUR[tf]||tf===viewTF)return;
     if(tf!=='1h'&&!HIGHER[tf]&&!subData[tf]){ tfBusy(true);
       try{await loadSub(tf);}catch(e){toast('데이터 로드 실패',true);tfBusy(false);return;} tfBusy(false);}
-    viewTF=tf; updateTFLabel(); drawView();
+    viewTF=tf; updateTFLabel(); if(axisCtl)axisCtl.reset(); drawView();
   }
   function stepTF(dir){const i=TF_LIST.indexOf(viewTF),n=i+dir;if(n<0||n>=TF_LIST.length)return;showView(TF_LIST[n]);}
 
@@ -1686,6 +1695,12 @@ try {
       getNow:()=>allData[idx-1].time+3600});
     if(tg.tvbox.on){tvOverlay.setVisible(true);loadTvBoxes();}
   }).catch(e=>console.warn('박스 모듈 로드 실패',e));
+  // 가로·세로 따로 조절: 오른쪽 아래 '자동/고정' 버튼, 가격 숫자 칸 휠·끌기 = 세로만, 폰 위아래 두 손가락 = 세로만
+  import('./axis-control.js').then(m=>{
+    axisCtl=m.attachAxisControl({chart,container:document.getElementById('chart-container'),theme:'light',
+      series:[candleSeries,sma20,sma60,sma120,bbUp,bbLow,dOpen,wOpen,bb4Up,bb4Low,bb3Up,bb3Low],
+      onChange:()=>{drawSMC();if(typeof drawTools==='function')drawTools();if(tvOverlay)tvOverlay.redraw();}});
+  }).catch(e=>console.warn('축 조절 모듈 로드 실패',e));
 
   // ===================== 순위표 로직 =====================
   const nickEl=document.getElementById('nickInput');
