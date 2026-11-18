@@ -125,7 +125,7 @@ async function selectData(id){
  if(loading)return;loading=true;document.querySelector('main').classList.add('busy');
  try{
   if(!datasets.has(id)){
-   if(id==='history'){await loadScript('data_m5.js');const n=normalize(decodeStored(window.XAU_M5).slice(-20000),300);datasets.set(id,{id:'repo-m5-88be1db-last20000',label:'기존 게임 저장 실제 시세 · 마지막 20,000개 M5',symbol:'XAUUSD',provider:'골드게임 저장 파일',interval:300,bars:n.bars,audit:n.audit});}
+   if(id==='history'){await loadScript('data_m5.js');const n=normalize(decodeStored(window.XAU_M5).slice(-20000),300);datasets.set(id,{id:'repo-m5-to20261118-last20000',label:'기존 게임 저장 실제 시세 · 마지막 20,000개 M5',symbol:'XAUUSD',provider:'골드게임 저장 파일',interval:300,bars:n.bars,audit:n.audit});}
    else throw Error('이 데이터를 현재 세션에서 찾을 수 없습니다. 다시 가져와 주세요.');
   }
   if(session)persist();const chosen=datasets.get(id);

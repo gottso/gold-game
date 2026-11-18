@@ -1,7 +1,7 @@
 {
-  "version": "2026-11-18-proxy-journal-v1",
-  "checkedAtUtc": "2026-11-17T15:23:54.366405+00:00",
-  "baseCommit": "ac0b4a3",
+  "version": "2026-11-18-data-extend-v1",
+  "checkedAtUtc": "2026-11-18T01:10:19.984931+00:00",
+  "baseCommit": "0d94ad9",
   "unitTests": {
     "passed": 42,
     "failed": 0
@@ -114,5 +114,12 @@
     "preparedH1Bars": 1411,
     "requests": 7,
     "scope": "Separate live provider read; browser date-chunk tests use test-only observations."
+  },
+  "historyData": {
+    "provider": "Dukascopy bid via dukascopy-node",
+    "h1Bars": 34768,
+    "end": "2026-11-18 06:00 KST (H1), 08:20 KST (M5)",
+    "appendedFrom": "2026-06-24",
+    "overlapPriceDiffMax": 0.0
   }
 }
