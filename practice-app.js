@@ -5,6 +5,8 @@ import {TD_PROXY} from './gold-config.js';
 import {enqueue,flush,practiceTrades,getCode,listBoxes} from './journal-client.js';
 import {createBoxOverlay} from './tv-boxes.js';
 import {attachAxisControl} from './axis-control.js';
+import {computeJikil} from './jikil-v12.js';
+import {createJikilOverlay} from './jikil-overlay.js';
 const $=id=>document.getElementById(id),finite=Number.isFinite;
 const fmt=(v,n=2)=>finite(v)?v.toLocaleString('en-US',{minimumFractionDigits:n,maximumFractionDigits:n}):'—';
 const stamp=t=>new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(t*1000));
@@ -12,6 +14,8 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 const text=(id,value)=>$(id).textContent=value;
 let noticeTimer,market=null,dataset=null,timeline=[],session=null,charts=null,decided=false,lastPlanStamp=null,loading=false;
 let tvOverlay=null,tvLoaded=false,lastMainBars=[];
+let jikilOverlay=null,jikilCache={market:null,result:null};   // 지킬 v1.2 지표 (지킬 3분봉 차트 전용)
+const JIKIL_PARTS_KEY='gold_jikil_parts',JIKIL_PARTS={boxes:'jk-boxes',ma:'jk-ma',avoid:'jk-avoid',virtual:'jk-virtual'};
 const datasets=new Map(),memory=new Map();
 let mode=new URLSearchParams(location.search).get('mode')||'1';if(!MODES.some(m=>m.id===mode))mode='1';
 function notice(message){text('notice',message);$('notice').classList.add('on');clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>$('notice').classList.remove('on'),7000);}
@@ -34,7 +38,7 @@ function makeCharts(){
   for(const [name,color] of [['sma20','#76a4ff'],['sma60','#f7b35c'],['sma120','#c29af0'],['bb20Up','#6c7c8e'],['bb20Low','#6c7c8e'],['bb4Up','#b7a975'],['bb4Low','#b7a975']])lines[name]=chart.addLineSeries({color,lineWidth:name.startsWith('sma')?2:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
   new ResizeObserver(()=>chart.resize(el.clientWidth,el.clientHeight)).observe(el);
   // 가로·세로 따로 조절: 오른쪽 아래 '자동/고정' 버튼, 가격 숫자 칸 휠·끌기 = 세로만, 폰 위아래 두 손가락 = 세로만
-  const axis=attachAxisControl({chart,container:el,series:[candles,...Object.values(lines)],theme:'dark',onChange:()=>{if(id==='main-chart'&&tvOverlay)tvOverlay.redraw();}});
+  const axis=attachAxisControl({chart,container:el,series:[candles,...Object.values(lines)],theme:'dark',onChange:()=>{if(id==='main-chart'){if(tvOverlay)tvOverlay.redraw();if(jikilOverlay)jikilOverlay.redraw();}}});
   return {chart,candles,lines,priceLines:[],axis,view:null};
  }
  return {main:make('main-chart'),upper:make('upper-chart')};
@@ -63,7 +67,7 @@ function drawChart(obj,bars,follow,key){
 }
 function chartsRender(follow=true){
  if(!charts)return;let tf=$('view-tf').value==='auto'?$('step-tf').value:$('view-tf').value;if(!market.frames[tf])tf=$('step-tf').value;const upperTF=$('upper-tf').value,mainBars=visibleFrame(tf,session.cursor),upper=visibleFrame(upperTF,session.cursor);
- drawChart(charts.main,mainBars,follow,dataset.id+'|'+tf);drawChart(charts.upper,upper,follow,dataset.id+'|'+upperTF);lastMainBars=mainBars;if(tvOverlay)tvOverlay.redraw();
+ drawChart(charts.main,mainBars,follow,dataset.id+'|'+tf);drawChart(charts.upper,upper,follow,dataset.id+'|'+upperTF);lastMainBars=mainBars;if(tvOverlay)tvOverlay.redraw();refreshJikil(tf,mainBars);
  const snap=contextAt(market,session.cursor).snapshot,ps=positionSummary(session.broker.position);
  if(ps)for(const [price,title,color] of [[ps.average,'평균단가','#a8b4c7'],[ps.stop,'손절','#ff837b'],[ps.target,'목표','#4ed59a']])if(finite(price))charts.main.priceLines.push(charts.main.candles.createPriceLine({price,color,lineWidth:1,lineStyle:2,axisLabelVisible:true,title}));
  for(const z of snap.zones.slice(-8))for(const price of [z.bot,z.top])charts.upper.priceLines.push(charts.upper.candles.createPriceLine({price,color:z.res?'#a66a62':'#528e75',lineWidth:1,lineStyle:2,axisLabelVisible:false,title:''}));
@@ -124,7 +128,7 @@ function initializeSession(reset=false,time=null){
 }
 function applyMode(){
  const m=MODES.find(m=>m.id===mode);text('mode-title',(Number(mode)?mode+' · ':'')+m.name);text('mode-summary',m.summary);
- $('nine-options').hidden=isSpecial()||mode==='6';$('special-options').hidden=!isSpecial();$('jikil-options').hidden=mode!=='jikil';$('ben-options').hidden=mode!=='benpark';$('manual-panel').hidden=!isSpecial();$('news-label').hidden=mode!=='jikil';$('ben-risk').hidden=mode!=='benpark';$('limit-plan').hidden=mode!=='7';
+ $('nine-options').hidden=isSpecial()||mode==='6';$('special-options').hidden=!isSpecial();$('jikil-options').hidden=mode!=='jikil';$('jikil-tools').hidden=mode!=='jikil';$('ben-options').hidden=mode!=='benpark';$('manual-panel').hidden=!isSpecial();$('news-label').hidden=mode!=='jikil';$('ben-risk').hidden=mode!=='benpark';$('limit-plan').hidden=mode!=='7';
  $('step-tf').replaceChildren();for(const tf of isSpecial()?[m.tf]:$('variant').value==='code'?['h1']:['h1','m5']){const op=new Option(TF_LABEL[tf]+(!isSpecial()&&tf==='m5'?' [문서 변형]':''),tf);$('step-tf').add(op);}
  $('step-tf').value=m.tf;
  text('rule-kind',mode==='6'?'수동 복기 전용 · 자동 정답 판정 보류':isSpecial()?'원문 체크 기본 · [제안] 수치 실험 선택 가능':'최신 v16 코드 기본 · 실제 체결과의 차이는 별도 기록');
@@ -212,6 +216,32 @@ function bind(){
  $('csv-file').onchange=async e=>{const file=e.target.files?.[0];if(!file)return;try{const raw=await file.text(),interval=Number($('csv-interval').value),n=normalize(parseCsv(raw,{timezone:$('csv-timezone').value}),interval,Date.now()/1000);if(n.audit.invalid)throw Error(`유효하지 않거나 미완성인 행 ${n.audit.invalid}개가 있습니다. 조용히 제외하지 않으므로 CSV를 확인해 주세요.`);if(n.bars.length<240)throw Error('완료된 실제 봉이 240개 이상 필요합니다.');if(isSpecial()&&interval!==60)throw Error('지킬·벤팍에는 실제 1분봉 CSV가 필요합니다.');const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw)))).map(x=>x.toString(16).padStart(2,'0')).join('');datasets.set('csv',{id:'csv-'+hash,label:'가져온 CSV · '+file.name,symbol:'사용자 CSV',provider:'사용자 가져오기',interval,bars:n.bars,audit:n.audit,sourceSha256:hash});if(!$('dataset').querySelector('[value="csv"]'))$('dataset').add(new Option('가져온 실제 CSV','csv'));await selectData('csv');}catch(err){notice(err.message);}finally{e.target.value='';}};
  $('export').onclick=()=>{persist();const payload={version:RULE_VERSION,mode,modeName:MODES.find(m=>m.id===mode).name,options:options(),source:{id:dataset.id,label:dataset.label,provider:dataset.provider,symbol:dataset.symbol,interval:dataset.interval,first:dataset.bars[0].time,last:dataset.bars.at(-1).time,sourceSha256:dataset.sourceSha256||null,fetchedAt:dataset.fetchedAt||null,windowDays:dataset.windowDays||null,replayStart:dataset.replayStart??null,replayEnd:dataset.replayEnd??null,coverage:dataset.coverage||null},replayTime:session.cursor,paperOnly:true,broker:session.broker.snapshot()};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download=`gold-practice-${mode}-${Date.now()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 }
+// 지킬 v1.2 지표 — 지킬 모드의 3분봉 관찰 차트에서만. H1 박스·굵은 이평·금지 구간·가상 진입을 각각 켜고 끈다.
+function jikilParts(){const p={};for(const [k,id] of Object.entries(JIKIL_PARTS))p[k]=!!$(id)?.checked;return p;}
+function setupJikil(){
+ if(!charts)return;
+ jikilOverlay=createJikilOverlay({container:$('main-chart'),chart:charts.main.chart,series:charts.main.candles,zIndex:2});
+ let saved=null;try{saved=JSON.parse(localStorage.getItem(JIKIL_PARTS_KEY));}catch{}
+ for(const [k,id] of Object.entries(JIKIL_PARTS)){const box=$(id);if(!box)continue;if(saved&&typeof saved[k]==='boolean')box.checked=saved[k];
+  box.onchange=()=>{try{localStorage.setItem(JIKIL_PARTS_KEY,JSON.stringify(jikilParts()));}catch{}if(session&&market)refreshJikil(currentViewTF(),lastMainBars);};}
+}
+function currentViewTF(){let tf=$('view-tf').value==='auto'?$('step-tf').value:$('view-tf').value;if(!market?.frames[tf])tf=$('step-tf').value;return tf;}
+function refreshJikil(tf,bars){
+ if(!jikilOverlay)return;
+ const on=mode==='jikil',m3=on&&tf==='m3'&&!!market?.frames?.m3;
+ if(m3&&jikilCache.market!==market){try{jikilCache={market,result:computeJikil(market)};}catch(e){jikilCache={market,result:null};notice('지킬 v1.2 계산 실패: '+e.message);}}
+ const parts=jikilParts(),view=jikilOverlay.update({result:m3?jikilCache.result:null,bars,cursor:session.cursor,active:m3,parts});
+ let note='';
+ if(on&&!m3)note='지킬 v1.2는 3분봉 관찰 차트에서만 표시됩니다.';
+ else if(view?.last){
+  const l=view.last,flat=s=>s.replaceAll('\n',' · ');
+  note='지금: '+l.caption+(l.caption==='양방향 진입 금지'?` · 매수: ${flat(l.buyWhy)} / 매도: ${flat(l.sellWhy)}`:l.caption==='매수 진입 금지'?' · '+flat(l.buyWhy):l.caption==='매도 진입 금지'?' · '+flat(l.sellWhy):'');
+  if(l.caption==='자료 준비 중')note+=' (H1 이평 120개·H2 이평 120개가 쌓여야 판단합니다. 최근 2주 연습 자료를 쓰면 준비됩니다.)';
+  if(parts.virtual&&l.levels)note+=` · 가상 ${l.levels.direction===1?'매수':'매도'} ${l.levels.legs}회 보유 (최초 ${l.levels.entry.toFixed(2)} · 손절 ${l.levels.stop.toFixed(2)} · 목표 ${l.levels.target.toFixed(2)})`;
+  if(parts.boxes)note+=` · H1 박스 지지 ${view.boxes.filter(z=>!z.res).length} / 저항 ${view.boxes.filter(z=>z.res).length}`;
+ }
+ text('jk-note',note);
+}
 // 트레이딩뷰 박스 (구분 없이 하나의 토글) — 재생 시각 이후는 그리지 않는다
 function setupTvBoxes(){
  if(!charts)return;
@@ -225,7 +255,7 @@ function setupTvBoxes(){
  };
 }
 async function init(){
- bind();charts=makeCharts();setupTvBoxes();flush().catch(()=>{});const s=window.GOLD_PRACTICE_M1;if(!s){notice('실제 M1 표본을 찾을 수 없습니다. 시세 파일을 확인해 주세요.');return;}
+ bind();charts=makeCharts();setupTvBoxes();setupJikil();flush().catch(()=>{});const s=window.GOLD_PRACTICE_M1;if(!s){notice('실제 M1 표본을 찾을 수 없습니다. 시세 파일을 확인해 주세요.');return;}
  const n=normalize(s.rows.map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]})),60);datasets.set('sample',{...s,bars:n.bars,audit:n.audit,rows:undefined});
  try{const key=sessionStorage.getItem('goldTrainingKey');if(key)$('api-key').value=key;for(const [id,cache,label] of [['recent','goldTrainingRecent','최근 받은 실제 M1'],['fortnight','goldTrainingFortnight','최근 2주 실제 M1']]){const stored=JSON.parse(sessionStorage.getItem(cache));if(stored?.bars?.length&&stored.interval===60){const fresh=unpackDataset(stored);datasets.set(id,fresh);$('dataset').add(new Option(label,id));}}}catch{}
  if(window.GOLD_PRACTICE_RECENT?.bars?.length){const verified=window.GOLD_PRACTICE_RECENT,n=normalize(verified.bars.filter(b=>tradableKST(b.time)),60);datasets.set('verified',{...verified,id:verified.id+'-kst',label:'확인된 최근 실제 시세 스냅샷 · 기존 게임 KST 필터',bars:n.bars,upperBars:verified.upperBars.filter(b=>tradableKST(b.time)),audit:n.audit});$('dataset').add(new Option('확인된 최근 실제 M1','verified'));}
