@@ -63,7 +63,7 @@ npm run serve
 직접 진입 주소: `index.html?load=fortnight`(자유 게임), `practice.html?source=fortnight`(11종 연습). 연결 키가 없는 새 탭에서 연습 주소를 열면 기존 게임의 데이터 연결을 거쳐 진입한다.
 
 - 기본값은 Twelve Data에서 실제로 받은 최근 시세 스냅샷이다. 받은 시각과 마지막 봉 시각을 화면에 표시한다. 스냅샷은 실시간 자동 갱신이 아니다.
-- 시세는 Supabase Edge Function `td-proxy`를 거쳐 받는다. Twelve Data 키는 Supabase 비밀값 `TWELVE_DATA_KEY`에만 있고 코드·URL·복기 파일에 들어가지 않는다. 프록시는 XAU/USD·정해진 봉 간격·gottso.github.io와 로컬 출처만 허용하고 같은 요청을 1분간 재사용한다. 데이터 설정에 키를 직접 넣으면 그 세션에서는 직접 호출한다.
+- 시세는 Supabase Edge Function `td-proxy`를 거쳐 받는다. Twelve Data 키는 Supabase 비밀값 `TWELVE_DATA_KEY`에만 있고 코드·URL·복기 파일에 들어가지 않는다. 프록시는 XAU/USD·정해진 봉 간격·gottso.github.io·xaugame.vercel.app과 로컬 출처만 허용하고 같은 요청을 1분간 재사용한다. 데이터 설정에 키를 직접 넣으면 그 세션에서는 직접 호출한다.
 - 최근 실제 시세 받기는 XAU/USD M1 최대 5,000개와 H1 800개를 요청한다. 제공처 제한·실패는 화면에 알리고 기존 자료를 유지한다. 정해진 7일을 항상 확보한다고 표시하지 않는다.
 - 한 요청의 최대 5,000개 제한은 [Twelve Data 공식 안내](https://support.twelvedata.com/en/articles/5214728-getting-historical-data)에 따른다.
 - 최근 모드는 기존 게임의 KST 거래시간 필터를 유지한다. 토요일 06시 이후·일요일·월요일 07시 이전을 제외한다. 이 상속 설정은 새 거래소 휴장·DST 달력을 검증했다는 뜻이 아니다.
