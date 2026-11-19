@@ -1,4 +1,5 @@
-/* Paper execution only. No order endpoint, broker account or real-money integration. */
+/* Paper execution only. No order endpoint, broker account or real-money integration.
+ * manage 'free' (자유 매매) may have no stop: the position then closes only by target or by the user. */
 const clone=v=>structuredClone(v),finite=Number.isFinite,EPS=1e-8,CONTRACT=100;
 export function splitLots(total,parts=3,step=.01){const units=Math.floor((total+EPS)/step);if(units<parts)throw Error(`${parts}회 분할에 필요한 최소 수량이 부족합니다. 총 수량을 강제로 늘리지 않습니다.`);return Array.from({length:parts},(_,i)=>Math.round((Math.floor(units/parts)+(i<units%parts?1:0))*step*1e8)/1e8);}
 const total=p=>p.entries.reduce((s,e)=>s+e.lots,0);
@@ -17,14 +18,14 @@ function simulate(base,b,spread,path){
  const close=(mid,reason,time)=>{const price=exitQuote(p,mid,spread),profit=(price-avg(p))*p.dir*total(p)*CONTRACT;out.balance+=profit;events.push({time,type:'close',reason,price,profit,lots:total(p),average:avg(p),entry0:p.entry0,entryTime:p.entryTime});p=null;pending=null;};
  const quote=(d,mid)=>mid+d*spread/2;
  function point(mid,opening=false){
-  if(p){const price=exitQuote(p,mid,spread);if(p.dir*(price-p.stop)<=EPS){close(mid,opening?'갭 손절':'손절',b.time);return;}if(finite(p.target)&&p.dir*(price-p.target)>=-EPS){close(mid,opening?'갭 목표':'목표',b.time);return;}}
+  if(p){const price=exitQuote(p,mid,spread);if(finite(p.stop)&&p.dir*(price-p.stop)<=EPS){close(mid,opening?'갭 손절':'손절',b.time);return;}if(finite(p.target)&&p.dir*(price-p.target)>=-EPS){close(mid,opening?'갭 목표':'목표',b.time);return;}}
   if(pending&&pending.placedAt<=b.time&&(!finite(pending.limit)&&opening||finite(pending.limit)&&pending.dir*(quote(pending.dir,mid)-pending.limit)<=EPS)){
    const price=quote(pending.dir,mid);
-   if(pending.manage!=='benpark'&&pending.manage!=='grid'&&pending.dir*(price-pending.stop)<=0||finite(pending.target)&&pending.dir*(pending.target-price)<=0){events.push({time:b.time,type:'cancel',reason:'갭으로 계획한 손절·목표 방향이 부적합해져 예약 취소'});pending=null;return;}
+   if(pending.manage!=='benpark'&&pending.manage!=='grid'&&finite(pending.stop)&&pending.dir*(price-pending.stop)<=0||finite(pending.target)&&pending.dir*(pending.target-price)<=0){events.push({time:b.time,type:'cancel',reason:'갭으로 계획한 손절·목표 방향이 부적합해져 예약 취소'});pending=null;return;}
    p=makePosition(pending,mid,spread,out.balance,b.time);events.push({time:b.time,type:'entry',price,lots:p.entries[0].lots});pending=null;
   }
   if(p){let j=p.entries.length-1;while(j<p.addLevels.length&&p.entries.length<p.planLots.length&&p.dir*(quote(p.dir,mid)-p.addLevels[j])<=EPS){const price=quote(p.dir,mid),lots=p.planLots[p.entries.length];p.entries.push({price,lots,time:b.time});events.push({time:b.time,type:'add',price,lots});if(p.manage==='benpark')p.stop=avg(p)-p.dir*p.budget/(total(p)*CONTRACT);if(p.manage==='grid'&&(!finite(p.target)||p.dir*(p.target-p.entry0)>0))p.target=p.entry0;j=p.entries.length-1;}
-   if(p.dir*(exitQuote(p,mid,spread)-p.stop)<=EPS)close(mid,'추가 후 합산 손절',b.time);
+   if(finite(p.stop)&&p.dir*(exitQuote(p,mid,spread)-p.stop)<=EPS)close(mid,'추가 후 합산 손절',b.time);
   }
  }
  if(pending&&finite(pending.expires)&&b.time>=pending.expires){events.push({time:b.time,type:'cancel',reason:'지정가 유효기간 종료'});pending=null;}
@@ -34,7 +35,7 @@ function simulate(base,b,spread,path){
  for(let i=1;i<points.length;i++){
   let a=points[i-1],end=points[i];for(let guard=0;guard<20;guard++){
    const levels=[];
-   if(p){levels.push(p.stop+p.dir*spread/2);if(finite(p.target))levels.push(p.target+p.dir*spread/2);const add=p.addLevels[p.entries.length-1];if(finite(add)&&p.entries.length<p.planLots.length)levels.push(add-p.dir*spread/2);}
+   if(p){if(finite(p.stop))levels.push(p.stop+p.dir*spread/2);if(finite(p.target))levels.push(p.target+p.dir*spread/2);const add=p.addLevels[p.entries.length-1];if(finite(add)&&p.entries.length<p.planLots.length)levels.push(add-p.dir*spread/2);}
    if(pending&&finite(pending.limit))levels.push(pending.limit-pending.dir*spread/2);
    const next=levels.filter(v=>Math.abs(v-a)>EPS&&(end>=a?v>a&&v<=end:v<a&&v>=end)).sort((x,y)=>Math.abs(x-a)-Math.abs(y-a))[0];
    if(next===undefined)break;point(next);a=next;
@@ -50,7 +51,7 @@ export class PaperBroker{
   if(this.balance<=0)throw Error('가상 잔고가 소진됐습니다. 이 모드에서 새 연습을 시작해 주세요.');
   if(this.position||this.pending||this.ambiguity)throw Error('현재 거래 묶음 또는 예약을 먼저 정리해 주세요.');
   if(![1,-1].includes(order.dir)||!Array.isArray(order.planLots)||!order.planLots.length||order.planLots.some(q=>!finite(q)||q<.01-EPS||Math.abs(q/.01-Math.round(q/.01))>EPS))throw Error('수량은 0.01랏 단위로 입력해 주세요.');
-  if(!finite(order.stop)&&!['grid','benpark'].includes(order.manage))throw Error('진입 전에 실제 가격으로 손절 계획을 입력해 주세요.');
+  if(!finite(order.stop)&&!['grid','benpark','free'].includes(order.manage))throw Error('진입 전에 실제 가격으로 손절 계획을 입력해 주세요.');
   if(finite(order.target)&&finite(order.stop)&&order.dir*(order.target-order.stop)<=0)throw Error('목표와 손절 가격 방향을 확인해 주세요.');
   this.pending={...clone(order),placedAt:time};this.journal.push({time,type:'plan',order:clone(this.pending)});
  }

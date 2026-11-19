@@ -1,4 +1,4 @@
-import {TF,TF_LABEL,normalize,decodeStored,parseCsv,fetchRecent,fetchFortnight,practiceBounds,practiceCoverage,packDataset,unpackDataset,upperBound,indicators,tradableKST} from './practice-data.js';
+import {TF,TF_LABEL,normalize,decodeStored,parseCsv,fetchRecent,fetchFortnight,fetchSession,latestSessionDate,sessionWindow,practiceBounds,practiceCoverage,packDataset,unpackDataset,upperBound,indicators,tradableKST} from './practice-data.js';
 import {MODES,RULE_VERSION,buildMarket,buildTimeline,contextAt,assess} from './practice-rules.js';
 import {PaperBroker,positionSummary,unrealized,splitLots} from './practice-broker.js';
 import {TD_PROXY} from './gold-config.js';
@@ -23,7 +23,10 @@ const options=()=>({variant:$('variant').value,experimental:$('experimental').ch
 const manual=()=>({direction:$('manual-direction').value,obstacle:$('manual-obstacle').value,reaction:$('manual-reaction').value,news:$('manual-news').value,note:$('manual-note').value});
 function clearManual(){for(const id of ['manual-direction','manual-obstacle','manual-reaction','manual-news'])$(id).value='unknown';$('manual-note').value='';}
 const isSpecial=()=>mode==='jikil'||mode==='benpark';
-function key(){const o=options();return ['gold-practice',RULE_VERSION,dataset.id,mode,$('step-tf').value,o.variant,o.jikilType,o.benType,o.setupTF,o.experimental?'experimental':'source'].join(':');}
+const manualOnly=()=>mode==='6'||mode==='freeplay';   // 자동 정답 판정이 없는 모드 (6번 수동 복기, 자유 매매)
+const FREE_TFS=['m1','m3','m5','m15','m30','h1'];
+// 자유 매매의 진행 봉은 넘기는 속도일 뿐이라 바꿔도 같은 연습(시각·포지션)이 이어진다
+function key(){const o=options();return ['gold-practice',RULE_VERSION,dataset.id,mode,mode==='freeplay'?'any-step':$('step-tf').value,o.variant,o.jikilType,o.benType,o.setupTF,o.experimental?'experimental':'source'].join(':');}
 function persist(){if(!session)return;if(!session.broker.runId)session.broker.runId='run-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);const value={cursor:session.cursor,broker:session.broker.snapshot(),manual:manual(),decided};memory.set(session.key,value);try{localStorage.setItem(session.key,JSON.stringify(value));}catch{notice('브라우저 저장 공간이 부족합니다. 복기를 내보내 주세요. 현재 연습은 메모리에서 계속됩니다.');}syncJournal();}
 // 청산된 거래를 개인 기록으로 (같은 청산은 한 번만). 코드가 없으면 기기에 쌓아두고 나중에 보낸다.
 let codeHintShown=false;
@@ -94,9 +97,9 @@ function render(follow=false){
  $('assessment').innerHTML=revealed?`<strong class="status-${a.status}">${status[a.status]||'직접 복기'}</strong><p>${esc(a.reason)}</p>${a.blocks.length?'<p>'+esc(a.blocks.join(' / '))+'</p>':''}`:'<strong>직접 판단해 보세요</strong><p>매수·매도·관망을 고르면 당시 조건의 해설을 보여줍니다.</p>';
  $('checks').replaceChildren();if(revealed)for(const c of a.checks){const row=document.createElement('div');row.className='check-row';const label=document.createElement('span'),value=document.createElement('span');label.textContent=c.label;value.textContent=c.value;row.append(label,value);$('checks').append(row);}
   if(revealed&&a.candidate&&lastPlanStamp!==a.time+':'+mode){lastPlanStamp=a.time+':'+mode;$('stop').value=finite(a.candidate.stop)?a.candidate.stop.toFixed(2):'';$('target').value=finite(a.candidate.target)?a.candidate.target.toFixed(2):'';if(mode==='7'){$('limit-price').value=finite(a.candidate.limit)?a.candidate.limit.toFixed(2):'';$('add-price').value=a.candidate.addLevels?.[0]?.toFixed(2)||'';}}
- text('wait',ps?'유지':'관망');$('next').disabled=!!broker.ambiguity||session.cursor>=dataset.bars.at(-1).time+dataset.interval;$('next-setup').disabled=isSpecial()||mode==='6'||!!ps||!!broker.pending||!!broker.ambiguity;
+ text('wait',ps?'유지':'관망');$('next').disabled=!!broker.ambiguity||session.cursor>=dataset.bars.at(-1).time+dataset.interval;$('next-setup').disabled=isSpecial()||manualOnly()||!!ps||!!broker.pending||!!broker.ambiguity;
  $('buy').disabled=$('sell').disabled=!!ps||!!broker.pending||!!broker.ambiguity||!charts;
- text('next',`다음 ${TF_LABEL[$('step-tf').value]}봉 →`);
+ text('next',dataset.sessionDate&&session.cursor>=practiceBounds(dataset).end?'장 마감 (05:00)':`다음 ${TF_LABEL[$('step-tf').value]}봉 →`);
  const o=options();text('risk-note',mode==='benpark'?`전체 비중을 최초 포함 총 3회에 분할합니다. 10·20포 역행 추가, 묶음 계좌 손절 ${$('budget').value}%. 추가는 가격 도달 방식 [실행 가정].`:mode==='jikil'&&o.jikilType==='grid'?'초기 구간형만 적용: E0 기준 10포 간격, 최초 포함 최대 6회, 손절 E0±55. 2회 이상 후 E0 회복 청산. 추세·역매매 공통값이 아닙니다.':'손절·목표가 자동으로 채워지지 않으면 직접 계획합니다. 신규 진입은 다음 실제 원시 봉 시가에 가상 체결합니다.');
  renderJournal();chartsRender(follow);
 }
@@ -118,7 +121,7 @@ function initializeSession(reset=false,time=null){
  const k=key(),old=reset?null:restoreValue(k),bars=market.frames[$('step-tf').value]||[];
  if(bars.length<5)throw Error('이 시간봉의 완성된 실제 봉이 부족합니다. 더 작은 시간봉이나 다른 데이터 구간을 선택해 주세요.');
  const bounds=practiceBounds(dataset),available=bars.filter(b=>b.end>=bounds.start&&b.end<=bounds.end);if(!available.length)throw Error('원시 시세와 타점 봉의 시간이 겹치지 않습니다.');
- const start=dataset.windowDays===14?bounds.start:available[Math.min(available.length-1,Math.floor(available.length*.35))].end;
+ const start=dataset.windowDays===14||dataset.sessionDate?bounds.start:available[Math.min(available.length-1,Math.floor(available.length*.35))].end;
  session={key:k,cursor:time??old?.cursor??start,broker:old?PaperBroker.restore(old.broker):new PaperBroker({balance:+$('initial').value||1000,spread:+$('spread').value||0})};
  session.cursor=Math.min(bounds.end,Math.max(bounds.start,session.cursor));
  decided=old?.decided||false;clearManual();if(old?.manual)for(const [k,v] of Object.entries(old.manual)){const el=$('manual-'+k);if(el)el.value=v;}
@@ -128,12 +131,13 @@ function initializeSession(reset=false,time=null){
 }
 function applyMode(){
  const m=MODES.find(m=>m.id===mode);text('mode-title',(Number(mode)?mode+' · ':'')+m.name);text('mode-summary',m.summary);
- $('nine-options').hidden=isSpecial()||mode==='6';$('special-options').hidden=!isSpecial();$('jikil-options').hidden=mode!=='jikil';$('jikil-tools').hidden=mode!=='jikil';$('ben-options').hidden=mode!=='benpark';$('manual-panel').hidden=!isSpecial();$('news-label').hidden=mode!=='jikil';$('ben-risk').hidden=mode!=='benpark';$('limit-plan').hidden=mode!=='7';
- $('step-tf').replaceChildren();for(const tf of isSpecial()?[m.tf]:$('variant').value==='code'?['h1']:['h1','m5']){const op=new Option(TF_LABEL[tf]+(!isSpecial()&&tf==='m5'?' [문서 변형]':''),tf);$('step-tf').add(op);}
+ $('nine-options').hidden=isSpecial()||manualOnly();$('special-options').hidden=!isSpecial();$('jikil-options').hidden=mode!=='jikil';$('jikil-tools').hidden=mode!=='jikil';$('ben-options').hidden=mode!=='benpark';$('manual-panel').hidden=!isSpecial();$('news-label').hidden=mode!=='jikil';$('ben-risk').hidden=mode!=='benpark';$('limit-plan').hidden=mode!=='7';
+ $('step-tf').replaceChildren();for(const tf of mode==='freeplay'?FREE_TFS:isSpecial()?[m.tf]:$('variant').value==='code'?['h1']:['h1','m5']){const op=new Option(TF_LABEL[tf]+(!isSpecial()&&!manualOnly()&&tf==='m5'?' [문서 변형]':''),tf);$('step-tf').add(op);}
  $('step-tf').value=m.tf;
- text('rule-kind',mode==='6'?'수동 복기 전용 · 자동 정답 판정 보류':isSpecial()?'원문 체크 기본 · [제안] 수치 실험 선택 가능':'최신 v16 코드 기본 · 실제 체결과의 차이는 별도 기록');
- $('rule-details').innerHTML=mode==='6'?'<p>사용자 확정: 6번은 모드만 제공하고 자동 정답 판정을 보류합니다. 시세·위험 계획·가상 체결·복기 기록은 사용할 수 있습니다.</p>':mode==='jikil'?'<p>[원문·사용자 확정] 2026-11-03 지킬·물뚜껑 통합 정리 기준. 추세와 역매매를 구분하고, 초기 10/50/55는 별도 관리형입니다.</p><p>[미정] 상위 기울기 계산, 이전 저점 선정, 봉내 근거 해제·재활성화의 일부 수식. 자동 확정하지 않고 직접 체크합니다.</p><p>[실험] 교차봉 제외·교차 후 첫 SMA120 접촉은 물뚜껑 해석과 기존 모델의 부분 구현입니다. 상위 조건 전체 자동화가 아닙니다. 초기 구간형의 반대 배열 재접촉 청산은 마감 확인 후 종가로 처리합니다.</p>':mode==='benpark'?'<p>[원문] A/B/C를 분리하고 큰 방향·5/10분 자리·1분 반응을 직접 확인합니다.</p><p>[사용자 확정 v6] 1분 마감 판단, 계좌 $1,000당 전체 비중 5%=0.05랏, 3회 분할, 역행 10·20포 추가, 계좌 대비 묶음 손절 기본 10%.</p><p>[실험] 자동 후보는 B형만 지원합니다. H1·자리봉의 종가/SMA20, 자리봉 SMA20의 3봉 기울기, 도지·망치 후 다음 봉 확인을 사용합니다. 원문 강한 추세 전체를 재현하지 않습니다. A/C는 수동 판정입니다.</p>':'<p>[기존 구현] 2026-10-22 v16·장기120 지표의 조건을 기본으로 옮겼습니다. H1 매물대와 선택 타점봉의 이평·밴드를 구분합니다.</p><p>문서 변형: 4·5번은 더블비 돌파, 4번 첫 SMA120, 9번 순수 4·4 원비만 허용합니다. 6번 자동 판정은 사용자 선택으로 보류합니다.</p><p>H1 매물대는 기존 v16 수치 재구성 소스를 이식했습니다. TradingView 런타임 일치나 원문의 전체 재량을 검증했다는 뜻은 아닙니다.</p>';
- $('rule-details').insertAdjacentHTML('beforeend','<p>9종 최신 코드의 신호 계산은 H1입니다. 관찰 차트를 바꿔도 신호·진행 단위는 변하지 않습니다. 1번 1R 외의 공통 익절은 원문·진입 지표에 확정되지 않아 직접 계획합니다.</p><p>모든 판단은 당시 공개된 봉만 사용합니다. 부분 상위봉은 표시만 하며 확정봉 판정에 섞지 않습니다. 2·4시간봉 경계는 기존 게임과 같은 KST 07시 기준입니다.</p><p><a href="PRACTICE.md" target="_blank" rel="noopener">전체 규칙·출처·검증 범위</a></p>');
+ $('stop').placeholder=mode==='freeplay'?'비워두면 손절 없음':'진입 전 설정';
+ text('rule-kind',mode==='freeplay'?'자유 매매 · 규칙 판정 없음 · 체결·기록은 그대로':mode==='6'?'수동 복기 전용 · 자동 정답 판정 보류':isSpecial()?'원문 체크 기본 · [제안] 수치 실험 선택 가능':'최신 v16 코드 기본 · 실제 체결과의 차이는 별도 기록');
+ $('rule-details').innerHTML=mode==='freeplay'?'<p>자유 매매: 규칙 해설·채점 없이 내 판단으로 매수·매도·청산합니다. 진행 봉(1분~1시간)은 직접 고릅니다.</p><p>매수·매도는 다음 실제 1분봉 시가에 가상 체결됩니다. 손절·목표를 넣으면 그 가격에 닿을 때 자동 청산되고, 손절을 비우면 목표나 \'청산\' 버튼으로만 정리됩니다. 같은 1분봉 안에서 손절·목표 순서가 불명확하면 직접 고릅니다.</p><p>청산된 거래는 내 기록에 \'자유 매매\'로 저장됩니다. 손절이 없는 거래는 R 배수를 계산하지 않습니다.</p>':mode==='6'?'<p>사용자 확정: 6번은 모드만 제공하고 자동 정답 판정을 보류합니다. 시세·위험 계획·가상 체결·복기 기록은 사용할 수 있습니다.</p>':mode==='jikil'?'<p>[원문·사용자 확정] 2026-11-03 지킬·물뚜껑 통합 정리 기준. 추세와 역매매를 구분하고, 초기 10/50/55는 별도 관리형입니다.</p><p>[미정] 상위 기울기 계산, 이전 저점 선정, 봉내 근거 해제·재활성화의 일부 수식. 자동 확정하지 않고 직접 체크합니다.</p><p>[실험] 교차봉 제외·교차 후 첫 SMA120 접촉은 물뚜껑 해석과 기존 모델의 부분 구현입니다. 상위 조건 전체 자동화가 아닙니다. 초기 구간형의 반대 배열 재접촉 청산은 마감 확인 후 종가로 처리합니다.</p>':mode==='benpark'?'<p>[원문] A/B/C를 분리하고 큰 방향·5/10분 자리·1분 반응을 직접 확인합니다.</p><p>[사용자 확정 v6] 1분 마감 판단, 계좌 $1,000당 전체 비중 5%=0.05랏, 3회 분할, 역행 10·20포 추가, 계좌 대비 묶음 손절 기본 10%.</p><p>[실험] 자동 후보는 B형만 지원합니다. H1·자리봉의 종가/SMA20, 자리봉 SMA20의 3봉 기울기, 도지·망치 후 다음 봉 확인을 사용합니다. 원문 강한 추세 전체를 재현하지 않습니다. A/C는 수동 판정입니다.</p>':'<p>[기존 구현] 2026-10-22 v16·장기120 지표의 조건을 기본으로 옮겼습니다. H1 매물대와 선택 타점봉의 이평·밴드를 구분합니다.</p><p>문서 변형: 4·5번은 더블비 돌파, 4번 첫 SMA120, 9번 순수 4·4 원비만 허용합니다. 6번 자동 판정은 사용자 선택으로 보류합니다.</p><p>H1 매물대는 기존 v16 수치 재구성 소스를 이식했습니다. TradingView 런타임 일치나 원문의 전체 재량을 검증했다는 뜻은 아닙니다.</p>';
+ $('rule-details').insertAdjacentHTML('beforeend',(mode==='freeplay'?'':'<p>9종 최신 코드의 신호 계산은 H1입니다. 관찰 차트를 바꿔도 신호·진행 단위는 변하지 않습니다. 1번 1R 외의 공통 익절은 원문·진입 지표에 확정되지 않아 직접 계획합니다.</p>')+'<p>모든 판단은 당시 공개된 봉만 사용합니다. 부분 상위봉은 표시만 하며 확정봉 판정에 섞지 않습니다. 2·4시간봉 경계는 기존 게임과 같은 KST 07시 기준입니다.</p><p><a href="PRACTICE.md" target="_blank" rel="noopener">전체 규칙·출처·검증 범위</a></p>');
 }
 async function loadScript(src){if(document.querySelector(`script[data-source="${src}"]`))return;await new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=src;s.dataset.source=src;s.onload=resolve;s.onerror=()=>{s.remove();reject(Error('실제 시세 파일을 읽지 못했습니다.'));};document.head.append(s);});}
 async function selectData(id){
@@ -146,8 +150,8 @@ async function selectData(id){
   if(session)persist();const chosen=datasets.get(id);
   if(isSpecial()&&chosen.interval!==60){notice('지킬 3분봉·벤팍 1분봉에는 실제 M1이 필요합니다. MT5 M1 표본을 표시합니다.');id='sample';}
   dataset=datasets.get(id);market=buildMarket(dataset);$('dataset').value=id;for(const op of $('view-tf').options)op.disabled=op.value!=='auto'&&!market.frames[op.value];
-  const cover=practiceCoverage(dataset),range=dataset.windowDays===14?`요청한 14일 ${stamp(dataset.replayStart)} ~ ${stamp(dataset.replayEnd)} KST · 실제 봉 ${stamp(cover.first)} ~ ${stamp(cover.last)}`:`${stamp(dataset.bars[0].time)} ~ ${stamp(dataset.bars.at(-1).time+dataset.interval)} KST`;
-  text('source-info',`${dataset.label} · ${dataset.provider} · 원시 ${dataset.interval/60}분 · ${range} · ${cover.count.toLocaleString()}봉${dataset.fetchedAt?' · 받은 시각 '+stamp(Date.parse(dataset.fetchedAt)/1000):' · 최신 시세 자동 갱신 아님'} · 공백 ${dataset.audit?.gaps??0}곳(주말 포함)${dataset.windowDays===14?' · 앞선 자료는 지표 준비용, 연습은 14일 안에서만 진행':''}`);
+  const cover=practiceCoverage(dataset),range=dataset.sessionDate?`연습 ${stamp(dataset.replayStart)} ~ ${stamp(dataset.replayEnd)} KST · 실제 봉 ${stamp(cover.first)} ~ ${stamp(cover.last)}`:dataset.windowDays===14?`요청한 14일 ${stamp(dataset.replayStart)} ~ ${stamp(dataset.replayEnd)} KST · 실제 봉 ${stamp(cover.first)} ~ ${stamp(cover.last)}`:`${stamp(dataset.bars[0].time)} ~ ${stamp(dataset.bars.at(-1).time+dataset.interval)} KST`;
+  text('source-info',`${dataset.label} · ${dataset.provider} · 원시 ${dataset.interval/60}분 · ${range} · ${cover.count.toLocaleString()}봉${dataset.fetchedAt?' · 받은 시각 '+stamp(Date.parse(dataset.fetchedAt)/1000):' · 최신 시세 자동 갱신 아님'} · 공백 ${dataset.audit?.gaps??0}곳(주말 포함)${dataset.windowDays===14?' · 앞선 자료는 지표 준비용, 연습은 14일 안에서만 진행':''}${dataset.sessionDate?' · 앞선 3일은 이평·구역 준비용, 연습은 07:00 개장부터 05:00 마감까지':''}`);
   $('start-time').min=new Date((practiceBounds(dataset).start+32400)*1000).toISOString().slice(0,16);$('start-time').max=new Date((practiceBounds(dataset).end+32400)*1000).toISOString().slice(0,16);
   text('chart-symbol',dataset.symbol||'XAUUSD');initializeSession();
  }catch(e){notice(e.message);}finally{loading=false;document.querySelector('main').classList.remove('busy');}
@@ -165,7 +169,7 @@ function advance(to){
 }
 function next(){
  if(!session||session.broker.ambiguity)return;
- const bars=market.frames[$('step-tf').value],i=upperBound(bars,session.cursor),next=bars[i];if(!next){notice('이 데이터 구간의 마지막 봉입니다. 최근 시세를 받거나 다른 실제 CSV를 가져와 주세요.');return;}advance(next.end);
+ const bars=market.frames[$('step-tf').value],i=upperBound(bars,session.cursor),next=bars[i];if(!next){notice(dataset.sessionDate?`${dataset.sessionDate} 장이 05:00에 마감했습니다. 보유 포지션은 '청산'으로 정리하고, 다른 날짜는 '그날 장 연습'으로 불러오세요.`:'이 데이터 구간의 마지막 봉입니다. 최근 시세를 받거나 다른 실제 CSV를 가져와 주세요.');return;}advance(next.end);
 }
 function recordDecision(action){
  const a=currentAssessment(action==='buy'?1:action==='sell'?-1:undefined),entry={time:session.cursor,type:'decision',action,mode,ruleVersion:RULE_VERSION,variant:options(),manual:manual(),assessment:{status:a.status,reason:a.reason,checks:structuredClone(a.checks),blocks:[...a.blocks],candidate:structuredClone(a.candidate)},source:{id:dataset.id,provider:dataset.provider,symbol:dataset.symbol,interval:dataset.interval}};
@@ -182,20 +186,58 @@ function order(dir){
   if(mode==='benpark'){manage='benpark';const allocation=Number($('allocation').value),budgetPct=Number($('budget').value);if(!(allocation>0&&allocation<=100&&budgetPct>0&&budgetPct<=100))throw Error('전체 비중·묶음 손절은 0 초과 100 이하로 입력해 주세요.');const total=session.broker.balance*allocation/100/10/100;planLots=splitLots(total,3);}
   if(mode==='jikil'&&o.jikilType==='grid'){manage='grid';planLots=Array(6).fill(lots);stop=null;}
   if(mode==='7'){limit=read('limit-price');const add=read('add-price');if(!finite(limit)||!finite(add))throw Error('7번은 진입 전에 25%·50% 지정가를 계획해 주세요.');if(dir*(limit-add)<=0)throw Error('50% 추가는 최초 지정가보다 역행 방향이어야 합니다.');expires=c?.expires??session.cursor+TF[$('step-tf').value]*2;addLevels=[add];planLots=[lots,lots];}
+  if(mode==='freeplay')manage='free';
   if(manage==='manual'&&!finite(stop))throw Error('손절 가격을 먼저 입력해 주세요. 선택과 해설은 기록했습니다.');
   const px=currentPrice();if(finite(stop)&&dir*(px-stop)<=0)throw Error('현재 가격에 맞는 손절 방향을 확인해 주세요.');if(finite(target)&&dir*(target-px)<=0)throw Error('현재 가격에 맞는 이익 방향 목표를 입력해 주세요.');
   session.broker.plan({dir,stop,target,planLots,addLevels,limit,expires,manage,budgetPct:Number($('budget').value)},session.cursor);
-  text('decision-feedback',(a.status==='blocked'?'금지 근거가 있는 선택을 연습 기록에 남겼습니다. ':a.kind==='manual'?'원문 재량 선택을 기록했습니다. ':'선택과 당시 근거를 기록했습니다. ')+(finite(limit)?'지정가 예약':'다음 실제 원시 봉 시가 체결 대기'));
+  text('decision-feedback',(a.status==='blocked'?'금지 근거가 있는 선택을 연습 기록에 남겼습니다. ':mode==='freeplay'?'자유 매매 주문을 기록했습니다. ':a.kind==='manual'?'원문 재량 선택을 기록했습니다. ':'선택과 당시 근거를 기록했습니다. ')+(finite(limit)?'지정가 예약':'다음 실제 원시 봉 시가 체결 대기'));
  }catch(e){text('decision-feedback',e.message);notice(e.message);}finally{persist();render();}
 }
+// ---- 하루 장 연습: 07:00 개장 ~ 다음날 05:00 마감. 끝난 장은 바뀌지 않으므로 이 기기에 날짜별로 보관한다(최근 3개) ----
+const SESSION_CACHE='goldSession:',SESSION_KEEP=3;
+function cachedSession(date){try{const v=JSON.parse(localStorage.getItem(SESSION_CACHE+date));return v?.bars?.length?unpackDataset(v):null;}catch{return null;}}
+function storeSession(data){
+ try{localStorage.setItem(SESSION_CACHE+data.sessionDate,JSON.stringify(packDataset(data)));
+  const keys=Object.keys(localStorage).filter(k=>k.startsWith(SESSION_CACHE)).sort();
+  for(const k of keys.slice(0,Math.max(0,keys.length-SESSION_KEEP)))localStorage.removeItem(k);}
+ catch{notice('받은 장은 지금 화면에서만 씁니다. 이 기기 저장 공간이 부족합니다.');}
+}
+function setupSessionPicker(){
+ let latest=null;try{latest=latestSessionDate();}catch{}
+ if(latest){$('session-date').max=latest;if(!$('session-date').value)$('session-date').value=latest;}
+ $('session-date').onchange=()=>{const d=$('session-date').value;text('session',d&&d===latest?'전날 장 연습':'그날 장 연습');};
+ $('session-date').onchange();
+}
+async function loadSession(date){
+ if(loading||$('session').disabled||$('recent').disabled||$('fortnight').disabled)return;
+ let w;try{date=date||latestSessionDate();w=sessionWindow(date);}catch(e){notice(e.message);return;}
+ const btn=$('session'),old=btn.textContent;
+ $('session').disabled=$('recent').disabled=$('fortnight').disabled=true;
+ try{
+  let data=cachedSession(date);
+  if(!data){
+   btn.textContent='장 시세 받는 중…';
+   const key=$('api-key').value.trim()||sessionStorage.getItem('goldTrainingKey')||'',src=key?{}:{proxy:TD_PROXY};
+   data=await fetchSession(key,{...src,date,onProgress:p=>{btn.textContent=`장 시세 ${p.completed}/${p.total}`;}});
+   storeSession(data);
+  }
+  datasets.set('session',data);
+  let op=$('dataset').querySelector('[value="session"]');if(!op){op=new Option('',  'session');$('dataset').add(op,0);}
+  op.textContent=`${date} 장 07:00~05:00`;
+  $('session-date').value=date;
+  await selectData('session');
+  if(dataset?.sessionDate===date)notice(`${date} 07:00 개장부터 시작합니다. '다음 봉'을 누를 때마다 한 봉씩 열립니다. 앞선 3일은 이평·구역 준비용입니다.`);
+ }catch(e){notice('장 불러오기: '+e.message+' 기존 연습은 유지합니다.');}
+ finally{$('session').disabled=$('recent').disabled=$('fortnight').disabled=false;btn.textContent=old;}
+}
 async function recent(days=0){
- if(loading||$('recent').disabled||$('fortnight').disabled)return;const is14=days===14,btn=is14?$('fortnight'):$('recent');
+ if(loading||$('recent').disabled||$('fortnight').disabled||$('session').disabled)return;const is14=days===14,btn=is14?$('fortnight'):$('recent');
  // 직접 넣은 키가 있으면 그 키로, 없으면 게임 서버(Supabase) 프록시로 받는다. 키는 코드·URL·기록에 남기지 않는다.
  const key=$('api-key').value.trim()||sessionStorage.getItem('goldTrainingKey')||'',src=key?{}:{proxy:TD_PROXY};
- $('recent').disabled=$('fortnight').disabled=true;btn.textContent='실제 시세 받는 중…';
+ $('recent').disabled=$('fortnight').disabled=$('session').disabled=true;btn.textContent='실제 시세 받는 중…';
  try{const fresh=is14?await fetchFortnight(key,{...src,onProgress:p=>{btn.textContent=`최근 2주 ${p.completed}/${p.total}`;}}):await fetchRecent(key,src),id=is14?'fortnight':'recent',cache=is14?'goldTrainingFortnight':'goldTrainingRecent';datasets.set(id,fresh);if(!$('dataset').querySelector(`[value="${id}"]`))$('dataset').add(new Option(is14?'최근 2주 실제 M1':'최근 받은 실제 M1',id));try{sessionStorage.setItem(cache,JSON.stringify(packDataset(fresh)));if(key)sessionStorage.setItem('goldTrainingKey',key);}catch{notice('받은 시세는 현재 화면에서 사용합니다. 세션 저장 공간이 부족합니다.');}await selectData(id);notice(is14?'최근 14일 범위의 실제 시세를 불러왔습니다. 주말·관측 공백과 마지막 봉 시각도 표시합니다.':'받은 범위의 실제 완료 봉을 불러왔습니다. 제공처·마지막 봉 시각을 확인해 주세요.');}
  catch(e){notice('최근 데이터 연결: '+e.message+' 기존 데이터는 유지합니다.');}
- finally{$('recent').disabled=$('fortnight').disabled=false;$('recent').textContent='최근 실제 시세 받기';$('fortnight').textContent='최근 2주 연습';}
+ finally{$('recent').disabled=$('fortnight').disabled=$('session').disabled=false;$('recent').textContent='최근 실제 시세 받기';$('fortnight').textContent='최근 2주 연습';}
 }
 function bind(){
  for(const m of MODES)$('mode').add(new Option((Number(m.id)?m.id+' · ':'')+m.name,m.id));$('mode').value=mode;applyMode();
@@ -212,7 +254,7 @@ function bind(){
  $('jump').onclick=()=>{const t=Date.parse($('start-time').value+':00+09:00')/1000,bounds=practiceBounds(dataset);if(!finite(t)||t<bounds.start||t>bounds.end){notice('현재 연습 기간 안의 한국시간을 입력해 주세요. 지표 준비용 과거 구간으로는 이동하지 않습니다.');return;}if(session.broker.position||session.broker.pending){notice('시점을 바꾸기 전에 현재 보유·예약을 정리해 주세요.');return;}initializeSession(true,t);};
  $('next-setup').onclick=()=>{const i=upperBound(timeline,session.cursor,'time'),target=timeline.slice(i).find(x=>x.candidate);if(!target){notice('남은 실제 구간에 자동 후보가 없습니다.');return;}advance(target.time);notice('중간 실제 봉을 공개하며 다음 후보 시점까지 진행했습니다.');};
  $('spread').onchange=()=>{const n=Number($('spread').value);if(!finite(n)||n<0){$('spread').value=session.broker.spread;return;}if(session.broker.position||session.broker.pending){notice('보유·예약 중에는 비용 조건을 변경할 수 없습니다.');$('spread').value=session.broker.spread;return;}session.broker.spread=n;persist();render();};
- $('recent').onclick=()=>recent();$('fortnight').onclick=()=>recent(14);
+ $('recent').onclick=()=>recent();$('fortnight').onclick=()=>recent(14);$('session').onclick=()=>loadSession($('session-date').value);
  $('csv-file').onchange=async e=>{const file=e.target.files?.[0];if(!file)return;try{const raw=await file.text(),interval=Number($('csv-interval').value),n=normalize(parseCsv(raw,{timezone:$('csv-timezone').value}),interval,Date.now()/1000);if(n.audit.invalid)throw Error(`유효하지 않거나 미완성인 행 ${n.audit.invalid}개가 있습니다. 조용히 제외하지 않으므로 CSV를 확인해 주세요.`);if(n.bars.length<240)throw Error('완료된 실제 봉이 240개 이상 필요합니다.');if(isSpecial()&&interval!==60)throw Error('지킬·벤팍에는 실제 1분봉 CSV가 필요합니다.');const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw)))).map(x=>x.toString(16).padStart(2,'0')).join('');datasets.set('csv',{id:'csv-'+hash,label:'가져온 CSV · '+file.name,symbol:'사용자 CSV',provider:'사용자 가져오기',interval,bars:n.bars,audit:n.audit,sourceSha256:hash});if(!$('dataset').querySelector('[value="csv"]'))$('dataset').add(new Option('가져온 실제 CSV','csv'));await selectData('csv');}catch(err){notice(err.message);}finally{e.target.value='';}};
  $('export').onclick=()=>{persist();const payload={version:RULE_VERSION,mode,modeName:MODES.find(m=>m.id===mode).name,options:options(),source:{id:dataset.id,label:dataset.label,provider:dataset.provider,symbol:dataset.symbol,interval:dataset.interval,first:dataset.bars[0].time,last:dataset.bars.at(-1).time,sourceSha256:dataset.sourceSha256||null,fetchedAt:dataset.fetchedAt||null,windowDays:dataset.windowDays||null,replayStart:dataset.replayStart??null,replayEnd:dataset.replayEnd??null,coverage:dataset.coverage||null},replayTime:session.cursor,paperOnly:true,broker:session.broker.snapshot()};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download=`gold-practice-${mode}-${Date.now()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 }
@@ -255,12 +297,13 @@ function setupTvBoxes(){
  };
 }
 async function init(){
- bind();charts=makeCharts();setupTvBoxes();setupJikil();flush().catch(()=>{});const s=window.GOLD_PRACTICE_M1;if(!s){notice('실제 M1 표본을 찾을 수 없습니다. 시세 파일을 확인해 주세요.');return;}
+ bind();setupSessionPicker();charts=makeCharts();setupTvBoxes();setupJikil();flush().catch(()=>{});const s=window.GOLD_PRACTICE_M1;if(!s){notice('실제 M1 표본을 찾을 수 없습니다. 시세 파일을 확인해 주세요.');return;}
  const n=normalize(s.rows.map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]})),60);datasets.set('sample',{...s,bars:n.bars,audit:n.audit,rows:undefined});
  try{const key=sessionStorage.getItem('goldTrainingKey');if(key)$('api-key').value=key;for(const [id,cache,label] of [['recent','goldTrainingRecent','최근 받은 실제 M1'],['fortnight','goldTrainingFortnight','최근 2주 실제 M1']]){const stored=JSON.parse(sessionStorage.getItem(cache));if(stored?.bars?.length&&stored.interval===60){const fresh=unpackDataset(stored);datasets.set(id,fresh);$('dataset').add(new Option(label,id));}}}catch{}
  if(window.GOLD_PRACTICE_RECENT?.bars?.length){const verified=window.GOLD_PRACTICE_RECENT,n=normalize(verified.bars.filter(b=>tradableKST(b.time)),60);datasets.set('verified',{...verified,id:verified.id+'-kst',label:'확인된 최근 실제 시세 스냅샷 · 기존 게임 KST 필터',bars:n.bars,upperBars:verified.upperBars.filter(b=>tradableKST(b.time)),audit:n.audit});$('dataset').add(new Option('확인된 최근 실제 M1','verified'));}
  await selectData(datasets.has('verified')?'verified':isSpecial()?'sample':'history');
  const params=new URLSearchParams(location.search);if(params.get('source')==='recent')await recent();
+ if(params.get('source')==='session')await loadSession(params.get('date')||'');
  if(params.get('source')==='fortnight'){if(params.get('cache')==='1'&&datasets.has('fortnight'))await selectData('fortnight');else await recent(14);}
 }
 init().catch(e=>notice('연습 화면 초기화: '+e.message));
