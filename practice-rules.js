@@ -1,6 +1,7 @@
 import {TF,indicators,aggregate,upperBound} from './practice-data.js';
 import {buildZoneTimeline,rejection} from './practice-zones.js';
 export const MODES=[
+ {id:'freeplay',name:'자유 매매',tf:'m5',manual:true,free:true,summary:'규칙 해설·채점 없이 내 판단으로 매수·매도·청산합니다. 수량·손절·목표는 직접 정하고, 주문은 다음 실제 봉 시가에 체결됩니다.'},
  {id:'1',name:'매물대 쌍비 변곡',tf:'m5',summary:'H1 유효 매물대와 3~8봉 간격의 새 밴드 접촉을 함께 봅니다.'},
  {id:'2',name:'추세지속 기본비 눌림',tf:'m5',summary:'20·60·120 배열 방향으로 새 반대쪽 밴드 접촉을 기다립니다.'},
  {id:'3',name:'20·120 교차 첫 장기이평',tf:'m5',summary:'교차봉을 제외한 첫 SMA120 접촉과 배열 방향의 종가를 확인합니다.'},
@@ -38,11 +39,11 @@ export function buildTimeline(market,tf,mode,options={}){
  const code=options.variant!=='document',state={},history=[];
  for(let i=0;i<bars.length;i++){
   const b=bars[i],p=bars[i-1],{snapshot:snap,frames}=contextAt(market,b.end);
-  const result={time:b.end,mode,tf,candidate:null,reason:'조건 대기',checks:[],kind:mode==='6'?'manual':'code',levels:[],bar:b};
+  const result={time:b.end,mode,tf,candidate:null,reason:'조건 대기',checks:[],kind:mode==='6'||mode==='freeplay'?'manual':'code',levels:[],bar:b};
   const emit=(d,reason,custom={})=>{const entry=custom.limit??b.close,stop=custom.stop??commonStop(snap,d,entry),target=custom.target??targetFor(b,snap,d,entry,mode,stop);result.candidate={dir:d,reason,stop,target,reference:entry,...custom};result.reason=reason;};
   const required=['2','3','9','jikil'].includes(mode)?[b.sma120,b.sma60,b.bb20Low,b.bb4Low]:[b.bb20Low,b.bb4Low];
   const ready=required.every(finite);
-  if(mode==='6'){result.reason='수동 복기 전용 · 자동 정답 판정 없음';history.push(result);continue;}
+  if(mode==='6'||mode==='freeplay'){result.reason=mode==='6'?'수동 복기 전용 · 자동 정답 판정 없음':'자유 매매 · 규칙 판정 없음';history.push(result);continue;}
   if(mode==='benpark'){
    result.kind=options.experimental?'proposal':'manual';const setup=frames[options.setupTF||'m5'],h=frames.h1,trend=x=>x&&finite(x.sma20)?Math.sign(x.close-x.sma20):0;
    result.reason='상위 방향·매물대와 M1 반응을 직접 확인하세요.';
@@ -107,7 +108,7 @@ export function buildTimeline(market,tf,mode,options={}){
 }
 export function assess(base,manual={},options={}){
  const result={...base,checks:[...base.checks],status:base.kind==='unknown'?'unknown':base.candidate?'candidate':'wait',blocks:[],manualRequired:false};
- if(base.mode==='6'){result.status='manual';return result;}
+ if(base.mode==='6'||base.mode==='freeplay'){result.status='manual';return result;}
  if(base.mode==='jikil'||base.mode==='benpark'){
   result.manualRequired=true;const d=options.intendedDirection??base.candidate?.dir;
   const obstacle=manual.obstacle??'unknown',news=manual.news??'unknown',reaction=manual.reaction??'unknown',direction=manual.direction??'unknown';

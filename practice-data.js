@@ -131,3 +131,57 @@ export async function fetchFortnight(key,{fetcher=fetch,now=Date.now()/1000,onPr
   onProgress({completed:chunks.length+1,total:chunks.length+1,stage:'done'});
   return {id:`fortnight-${start}-${end}`,label:'최신 2주 실제 시세',symbol:'XAU/USD',provider:'Twelve Data',interval:60,bars:n.bars,upperBars:h.bars,audit:n.audit,calendar:'기존 게임 KST 거래시간',windowDays:14,replayStart:start,replayEnd:end,coverage,fetchedAt:new Date(now*1000).toISOString()};
 }
+
+// ---- 하루 장 연습: 날짜(KST, 07:00 개장일)의 07:00 ~ 다음날 05:00 ----
+// 연습 구간 M1 + 바로 앞 3일 M1(작은 시간봉 이평 준비) + 장 마감까지의 H1 2000개(H1 구역·상위봉 준비).
+// 장 마감 이후 자료는 받지 않는다. 비어 있는 시간을 다른 날 자료로 메우지 않는다.
+export const SESSION_HOURS={open:7,close:5};
+const kstDay=time=>new Date((time+32400)*1000).getUTCDay();
+const kstDateOf=time=>new Date((time+32400)*1000).toISOString().slice(0,10);
+export function sessionWindow(date){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(date)))throw Error('장 날짜 형식이 올바르지 않습니다.');
+  const open=Date.parse(`${date}T${String(SESSION_HOURS.open).padStart(2,'0')}:00:00+09:00`)/1000;
+  if(!Number.isFinite(open))throw Error('장 날짜를 읽을 수 없습니다.');
+  return {date,open,close:open+(24-SESSION_HOURS.open+SESSION_HOURS.close)*3600,weekday:kstDay(open)};
+}
+// 지금 시각 기준 가장 최근에 끝난 평일 장 (월요일 아침이면 금요일 장)
+export function latestSessionDate(now=Date.now()/1000){
+  for(let k=0;k<10;k++){const w=sessionWindow(kstDateOf(now-k*86400));if(w.close<=now&&w.weekday>=1&&w.weekday<=5)return w.date;}
+  throw Error('최근 장 날짜를 찾지 못했습니다.');
+}
+export async function fetchSession(key,{date=null,fetcher=fetch,now=Date.now()/1000,onProgress=()=>{},signal,proxy=null}={}){
+  const {base,init,secret}=tdEndpoint(key,proxy,'데이터 설정에 API 키를 입력하거나 게임 서버 연결을 확인해 주세요.');
+  const w=sessionWindow(date||latestSessionDate(now));
+  if(w.weekday===0||w.weekday===6)throw Error(`${w.date}은 주말이라 07:00 개장 장이 없습니다. 평일 날짜를 골라 주세요.`);
+  if(w.close>now)throw Error(`${w.date} 장은 다음날 05:00에 끝납니다. 끝난 장만 불러올 수 있습니다.`);
+  const warmupStart=w.open-3*86400,chunks=[{start:warmupStart,end:w.open},{start:w.open,end:w.close}];
+  const read=async(interval,outputsize,extra={})=>{
+    const response=await fetcher(base+'&'+new URLSearchParams({interval,outputsize:String(outputsize),...extra}),{...init,signal});
+    const d=await response.json();
+    if(!response.ok||d.status==='error'||!Array.isArray(d.values)){
+      // 제공처는 자료가 없는 기간을 오류로 돌려준다 → 빈 구간으로 보고 아래에서 판단
+      if(/no data/i.test(String(d.message||'')))return [];
+      throw Error(hideSecret(d.message||'시세를 받지 못했습니다.',secret));
+    }
+    return d.values.map(v=>({time:Date.parse(v.datetime.replace(' ','T')+'Z')/1000,open:+v.open,high:+v.high,low:+v.low,close:+v.close,volume:+v.volume||0}));
+  };
+  const received=[];
+  for(let i=0;i<chunks.length;i++){
+    const chunk=chunks[i];onProgress({completed:i,total:chunks.length+1,stage:i?'장 M1':'준비 M1'});
+    const rows=await read('1min',5000,{start_date:utcParam(chunk.start),end_date:utcParam(chunk.end-1)});
+    const inside=rows.filter(b=>b.time>=chunk.start&&b.time+60<=chunk.end);
+    if(rows.length&&!inside.length)throw Error('제공처가 요청한 날짜 밖의 자료를 돌려주었습니다. 기존 연습은 유지합니다.');
+    received.push(...inside);
+  }
+  onProgress({completed:chunks.length,total:chunks.length+1,stage:'H1'});
+  const upper=await read('1h',2000,{end_date:utcParam(w.close-1)});
+  const n=normalize(received.filter(b=>tradableKST(b.time)),60,w.close),h=normalize(upper.filter(b=>tradableKST(b.time)&&b.time+3600<=w.close),3600,w.close);
+  if(n.audit.invalid)throw Error('유효하지 않은 시세 행이 있어 이 장 자료를 적용하지 않았습니다.');
+  const exercise=n.bars.filter(b=>b.time>=w.open&&b.time+60<=w.close);
+  if(exercise.length<120)throw Error(`${w.date} 장에는 실제 1분봉이 ${exercise.length}개뿐입니다. 휴장일이거나 제공처에 그날 자료가 없을 수 있습니다.`);
+  if(h.bars.length<150)throw Error('이 장 연습에 필요한 H1 준비 자료가 부족합니다. 기존 연습은 유지합니다.');
+  const coverage={requestedStart:w.open,requestedEnd:w.close,observedStart:exercise[0].time,observedEnd:exercise.at(-1).time+60,barCount:exercise.length,warmupStart,requests:chunks.length+1};
+  onProgress({completed:chunks.length+1,total:chunks.length+1,stage:'done'});
+  return {id:`session-${w.date}`,label:`${w.date} 장 07:00~05:00`,symbol:'XAU/USD',provider:'Twelve Data',interval:60,bars:n.bars,upperBars:h.bars,audit:n.audit,
+    calendar:'기존 게임 KST 거래시간',sessionDate:w.date,replayStart:w.open,replayEnd:w.close,coverage,fetchedAt:new Date(now*1000).toISOString()};
+}

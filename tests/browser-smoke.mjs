@@ -27,7 +27,7 @@ const check=(name,fn)=>{assert(fn,name);checks.push(name);};
 // 축 따로 조절: 가격 숫자 칸 휠 = 세로만 → '고정', 버튼 = 다시 '자동'
 const axisToggle=async(scope,name)=>{const btn=page.locator(scope+' .axis-ctl');await btn.waitFor();await btn.scrollIntoViewIfNeeded();check(name+' axis starts auto',(await btn.innerText())==='자동');const b=await btn.boundingBox();await page.mouse.move(b.x+b.width/2,b.y-60);await page.mouse.wheel(0,-240);await page.waitForTimeout(250);check(name+' price-axis wheel fixes vertical',(await btn.innerText())==='고정');await btn.click();await page.waitForTimeout(150);check(name+' axis button returns to auto',(await btn.innerText())==='자동');};
 try{
- await page.goto(origin+'/practice.html');await ready();check('eleven selectable modes',await page.locator('#mode option').count()===11);check('verified actual data default',(await page.locator('#source-info').innerText()).includes('Twelve Data'));await axisToggle('#main-chart','practice');
+ await page.goto(origin+'/practice.html');await ready();check('eleven rule modes plus free trading',await page.locator('#mode option').count()===12&&(await page.locator('#mode option').first().innerText())==='자유 매매');check('verified actual data default',(await page.locator('#source-info').innerText()).includes('Twelve Data'));await axisToggle('#main-chart','practice');
  for(const id of ['1','2','3','4','5','6','7','8','9','jikil','benpark']){
   await page.selectOption('#mode',id);const before=await page.locator('#clock').innerText();await page.locator('#wait').click();await page.locator('#next').click();const after=await page.locator('#clock').innerText();check('replay progresses in mode '+id,before!==after);check('right signal timeframe '+id,await page.locator('#step-tf').inputValue()===(id==='jikil'?'m3':id==='benpark'?'m1':'h1'));
  }
@@ -65,5 +65,13 @@ try{
  for(const width of [390,320]){await page.setViewportSize({width,height:1000});await page.waitForTimeout(150);const sizes=await page.evaluate(()=>({w:document.documentElement.clientWidth,s:document.documentElement.scrollWidth}));check('fortnight controls fit mobile '+width,sizes.w===sizes.s);}
  await page.screenshot({path:path.join(root,'.local','fortnight-mobile.png'),fullPage:true});
  await page.evaluate(()=>sessionStorage.clear());fortnightCalls=[];minuteCalls=0;await page.goto(origin+'/practice.html?source=fortnight');await page.waitForFunction(()=>document.querySelector('#dataset').value==='fortnight');check('new-tab fortnight loads through server proxy',fortnightCalls.length===7&&proxyCalls.every(u=>!u.includes('apikey')));check('no browser exceptions',errors.length===0);
+ // 전날 장 07:00~05:00 + 자유 매매: 가장 최근 끝난 장을 3번 요청으로 받아 개장에서 시작, 손절 없이 매수 → 다음 1분봉 체결, 진행 봉을 바꿔도 이어짐
+ {const n0=fortnightCalls.length;await page.goto(origin+'/practice.html?source=session&mode=freeplay');await page.waitForFunction(()=>document.querySelector('#dataset').value==='session',null,{timeout:60000});
+  check('session loads latest finished day with 3 requests',fortnightCalls.length-n0===3);
+  check('session starts at 07:00 open',(await page.locator('#clock').innerText()).includes('07:00'));
+  await page.selectOption('#step-tf','m1');await page.locator('#buy').click();await page.locator('#next').click();
+  check('free trade fills without stop on next bar',(await page.locator('#position').innerText()).includes('매수'));
+  await page.selectOption('#step-tf','m5');check('free trade keeps position when step changes',(await page.locator('#position').innerText()).includes('매수'));
+  await page.locator('#close').click();check('free trade closes by user',(await page.locator('#journal').innerText()).includes('사용자 전량 청산'));}
  const report={passed:checks.length,checks,errors,scope:'Local source routed into Chromium; no live provider claim from this test.'};await fs.writeFile(path.join(root,'.local','browser-report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
 }finally{await browser.close();}
