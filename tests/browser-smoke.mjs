@@ -71,6 +71,7 @@ try{
   check('session starts at 07:00 open',(await page.locator('#clock').innerText()).includes('07:00'));
   await page.selectOption('#step-tf','m1');await page.locator('#buy').click();await page.locator('#next').click();
   check('free trade fills without stop on next bar',(await page.locator('#position').innerText()).includes('매수'));
+  check('auto plan shows next add, stop and take-profit',/다음 추가 .* \(#2\) · 손절 /.test(await page.locator('#auto-preview').innerText()));
   await page.selectOption('#step-tf','m5');check('free trade keeps position when step changes',(await page.locator('#position').innerText()).includes('매수'));
   await page.locator('#close').click();check('free trade closes by user',(await page.locator('#journal').innerText()).includes('사용자 전량 청산'));}
  const report={passed:checks.length,checks,errors,scope:'Local source routed into Chromium; no live provider claim from this test.'};await fs.writeFile(path.join(root,'.local','browser-report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
