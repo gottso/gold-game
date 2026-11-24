@@ -5,7 +5,8 @@
 //           + 사유가 바뀐 봉의 사유 라벨 + 첫 눌림 차단 라벨(회색)
 //  virtual: 가상 진입·추가·청산 라벨 + 최초가(흰)·평균가(주황)·손절가(빨강)·목표가(연두)·다음 추가 가격(주황 가는 선)
 // 계산은 jikil-v12.js. 여기서는 재생 시각까지 공개된 것만 그린다.
-import { jikilAt, formatKSTId, JIKIL_COLORS as C } from './jikil-v12.js';
+import { jikilAt, JIKIL_COLORS as C } from './jikil-v12.js';
+import { drawLabel, drawZoneBoxes } from './zone-boxes.js';
 
 const finite = Number.isFinite;
 const VIRTUAL_COLOR = (kind, d) => kind === '손절' ? '#f23645' : kind === '진입' ? (d === 1 ? '#089981' : '#e040fb') : kind === '추가' ? '#ff9800' : '#2962ff';
@@ -59,39 +60,8 @@ export function createJikilOverlay({ container, chart, series, zIndex = 2 }) {
     }
   }
 
-  // ---- 좌표 ----
-  const firstIndexAtOrAfter = t => { let lo = 0, hi = chartBars.length; while (lo < hi) { const m = (lo + hi) >> 1; if (chartBars[m].time < t) lo = m + 1; else hi = m; } return lo; };
-  const xOfTime = t => { const x = chart.timeScale().timeToCoordinate(t); return x != null ? x : chart.timeScale().logicalToCoordinate(firstIndexAtOrAfter(t)); };
   const yOf = p => series.priceToCoordinate(p);
-
-  function label(text, x, y, bg, dir, W, H) {
-    // dir 'down' = 점 위에 라벨(꼬리 아래), 'up' = 점 아래에 라벨(꼬리 위), 'left' = 점 오른쪽에 라벨(꼬리 왼쪽)
-    const lines = String(text).split('\n');
-    ctx.font = '10px system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif';
-    const lh = 12, pad = 4, tail = 5;
-    const w = Math.ceil(Math.max(...lines.map(s => ctx.measureText(s).width))) + pad * 2, h = lines.length * lh + pad * 2 - 2;
-    let bx, by;
-    if (dir === 'left') { bx = x + tail; by = y - h / 2; }
-    else { bx = x - w / 2; by = dir === 'down' ? y - tail - h : y + tail; }
-    if (x < -w || x > W + w || by + h < 0 || by > H) return;
-    // 차트 가장자리에서 잘리지 않게 라벨 상자만 안쪽으로 민다 (꼬리는 원래 자리를 가리킨다)
-    const shifted = Math.min(Math.max(bx, 2), W - w - 2);
-    const moved = shifted !== bx;
-    bx = shifted;
-    ctx.fillStyle = bg;
-    ctx.beginPath();
-    ctx.roundRect ? ctx.roundRect(bx, by, w, h, 3) : ctx.rect(bx, by, w, h);
-    ctx.fill();
-    if (!(dir === 'left' && moved) && x >= 0 && x <= W) {
-      ctx.beginPath();
-      if (dir === 'left') { ctx.moveTo(x, y); ctx.lineTo(bx, y - 4); ctx.lineTo(bx, y + 4); }
-      else if (dir === 'down') { ctx.moveTo(x, y); ctx.lineTo(x - 4, by + h); ctx.lineTo(x + 4, by + h); }
-      else { ctx.moveTo(x, y); ctx.lineTo(x - 4, by); ctx.lineTo(x + 4, by); }
-      ctx.fill();
-    }
-    ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    lines.forEach((s, i) => ctx.fillText(s, bx + pad, by + pad + i * lh - 1));
-  }
+  const label = (text, x, y, bg, dir, W, H) => drawLabel(ctx, text, x, y, bg, dir, W, H);
 
   function redraw() {
     const w = container.clientWidth, h = container.clientHeight, d = window.devicePixelRatio || 1;
@@ -120,24 +90,7 @@ export function createJikilOverlay({ container, chart, series, zIndex = 2 }) {
       flush();
     }
 
-    if (parts.boxes && view.boxes.length) {
-      const right = view.lastClosedTime != null ? xOfTime(view.lastClosedTime) : W;
-      for (const z of view.boxes) {
-        const c = z.res ? C.resistance : C.support;
-        const x1 = xOfTime(z.bounds), ya = yOf(z.top), yb = yOf(z.bot);
-        if (x1 == null || ya == null || yb == null) continue;
-        const y = Math.min(ya, yb), hh = Math.max(1, Math.abs(yb - ya)), left = Math.max(-2, x1);
-        ctx.globalAlpha = 0.14; ctx.fillStyle = c; ctx.fillRect(left, y, W - left + 2, hh); ctx.globalAlpha = 1;
-        ctx.strokeStyle = c; ctx.lineWidth = 1; ctx.setLineDash(z.family === 1 ? [4, 3] : []);
-        ctx.strokeRect(left + 0.5, y + 0.5, W - left + 2, hh - 1); ctx.setLineDash([]);
-        if (hh >= 11) {
-          ctx.fillStyle = c; ctx.font = '10px system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif';
-          ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-          ctx.fillText(z.kind + ' · ' + (z.res ? '저항' : '지지'), Math.max(left, 0) + 4, y + hh / 2);
-        }
-        if (right != null) label(formatKSTId(z.born) + ' ' + z.kind, right, (ya + yb) / 2, c, 'left', W, H);
-      }
-    }
+    if (parts.boxes) drawZoneBoxes(ctx, { chart, series, bars: chartBars, boxes: view.boxes, lastClosedTime: view.lastClosedTime, W, H });
 
     if (parts.avoid) {
       for (const l of view.reasonLabels) {

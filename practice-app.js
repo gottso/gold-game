@@ -5,7 +5,8 @@ import {TD_PROXY} from './gold-config.js';
 import {enqueue,flush,practiceTrades,getCode,listBoxes} from './journal-client.js';
 import {createBoxOverlay} from './tv-boxes.js';
 import {attachAxisControl} from './axis-control.js';
-import {computeJikil} from './jikil-v12.js';
+import {computeJikil,displayZones} from './jikil-v12.js';
+import {createZoneBoxOverlay} from './zone-boxes.js';
 import {createJikilOverlay} from './jikil-overlay.js';
 const $=id=>document.getElementById(id),finite=Number.isFinite;
 const fmt=(v,n=2)=>finite(v)?v.toLocaleString('en-US',{minimumFractionDigits:n,maximumFractionDigits:n}):'—';
@@ -14,6 +15,7 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'
 const text=(id,value)=>$(id).textContent=value;
 let noticeTimer,market=null,dataset=null,timeline=[],session=null,charts=null,decided=false,lastPlanStamp=null,loading=false;
 let tvOverlay=null,tvLoaded=false,lastMainBars=[];
+let upperZones=null;   // 상위 구조 차트의 H1 매물대 박스
 let jikilOverlay=null,jikilCache={market:null,result:null};   // 지킬 v1.2 지표 (지킬 3분봉 차트 전용)
 const JIKIL_PARTS_KEY='gold_jikil_parts',JIKIL_PARTS={boxes:'jk-boxes',ma:'jk-ma',avoid:'jk-avoid',virtual:'jk-virtual'};
 const datasets=new Map(),memory=new Map();
@@ -41,7 +43,7 @@ function makeCharts(){
   for(const [name,color] of [['sma20','#76a4ff'],['sma60','#f7b35c'],['sma120','#c29af0'],['bb20Up','#6c7c8e'],['bb20Low','#6c7c8e'],['bb4Up','#b7a975'],['bb4Low','#b7a975']])lines[name]=chart.addLineSeries({color,lineWidth:name.startsWith('sma')?2:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
   new ResizeObserver(()=>chart.resize(el.clientWidth,el.clientHeight)).observe(el);
   // 가로·세로 따로 조절: 오른쪽 아래 '자동/고정' 버튼, 가격 숫자 칸 휠·끌기 = 세로만, 폰 위아래 두 손가락 = 세로만
-  const axis=attachAxisControl({chart,container:el,series:[candles,...Object.values(lines)],theme:'dark',onChange:()=>{if(id==='main-chart'){if(tvOverlay)tvOverlay.redraw();if(jikilOverlay)jikilOverlay.redraw();}}});
+  const axis=attachAxisControl({chart,container:el,series:[candles,...Object.values(lines)],theme:'dark',onChange:()=>{if(id==='main-chart'){if(tvOverlay)tvOverlay.redraw();if(jikilOverlay)jikilOverlay.redraw();}else if(upperZones)upperZones.redraw();}});
   return {chart,candles,lines,priceLines:[],axis,view:null};
  }
  return {main:make('main-chart'),upper:make('upper-chart')};
@@ -73,7 +75,9 @@ function chartsRender(follow=true){
  drawChart(charts.main,mainBars,follow,dataset.id+'|'+tf);drawChart(charts.upper,upper,follow,dataset.id+'|'+upperTF);lastMainBars=mainBars;if(tvOverlay)tvOverlay.redraw();refreshJikil(tf,mainBars);
  const snap=contextAt(market,session.cursor).snapshot,ps=positionSummary(session.broker.position);
  if(ps)for(const [price,title,color] of [[ps.average,'평균단가','#a8b4c7'],[ps.stop,'손절','#ff837b'],[ps.target,'목표','#4ed59a']])if(finite(price))charts.main.priceLines.push(charts.main.candles.createPriceLine({price,color,lineWidth:1,lineStyle:2,axisLabelVisible:true,title}));
- for(const z of snap.zones.slice(-8))for(const price of [z.bot,z.top])charts.upper.priceLines.push(charts.upper.candles.createPriceLine({price,color:z.res?'#a66a62':'#528e75',lineWidth:1,lineStyle:2,axisLabelVisible:false,title:''}));
+ // 상위 구조 차트: H1 매물대를 지킬 3분봉과 같은 박스로 (가까운 지지·저항 각 4개, 같은 역할로 겹치면 최신만)
+ if(upperZones){const h1=market.frames.h1||[],k=upperBound(h1,session.cursor)-1,h=k>=0?h1[k]:null;
+  upperZones.update({boxes:h&&snap&&snap.end===h.end?displayZones(snap.zones,h.close):[],lastClosedTime:h?h.end:null,bars:upper});}
  const markers=session.broker.journal.filter(e=>['entry','add','close'].includes(e.type)&&e.time<session.cursor).slice(-25).map(e=>{const bucket=Math.floor(e.time/TF[tf])*TF[tf];const exists=mainBars.some(b=>b.time===bucket);return exists?{time:bucket,position:e.type==='close'?'aboveBar':'belowBar',color:e.type==='close'?'#e8b84b':'#76a4ff',shape:e.type==='close'?'circle':'arrowUp',text:e.type==='close'?'청산':e.type==='add'?'추가':'진입'}:null;}).filter(Boolean).sort((a,b)=>a.time-b.time);
  // Chart library accepts multiple same-time markers; every marker is revealed only after execution.
  charts.main.candles.setMarkers(markers);
@@ -297,7 +301,7 @@ function setupTvBoxes(){
  };
 }
 async function init(){
- bind();setupSessionPicker();charts=makeCharts();setupTvBoxes();setupJikil();flush().catch(()=>{});const s=window.GOLD_PRACTICE_M1;if(!s){notice('실제 M1 표본을 찾을 수 없습니다. 시세 파일을 확인해 주세요.');return;}
+ bind();setupSessionPicker();charts=makeCharts();upperZones=createZoneBoxOverlay({container:$('upper-chart'),chart:charts.upper.chart,series:charts.upper.candles,zIndex:2});setupTvBoxes();setupJikil();flush().catch(()=>{});const s=window.GOLD_PRACTICE_M1;if(!s){notice('실제 M1 표본을 찾을 수 없습니다. 시세 파일을 확인해 주세요.');return;}
  const n=normalize(s.rows.map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]})),60);datasets.set('sample',{...s,bars:n.bars,audit:n.audit,rows:undefined});
  try{const key=sessionStorage.getItem('goldTrainingKey');if(key)$('api-key').value=key;for(const [id,cache,label] of [['recent','goldTrainingRecent','최근 받은 실제 M1'],['fortnight','goldTrainingFortnight','최근 2주 실제 M1']]){const stored=JSON.parse(sessionStorage.getItem(cache));if(stored?.bars?.length&&stored.interval===60){const fresh=unpackDataset(stored);datasets.set(id,fresh);$('dataset').add(new Option(label,id));}}}catch{}
  if(window.GOLD_PRACTICE_RECENT?.bars?.length){const verified=window.GOLD_PRACTICE_RECENT,n=normalize(verified.bars.filter(b=>tradableKST(b.time)),60);datasets.set('verified',{...verified,id:verified.id+'-kst',label:'확인된 최근 실제 시세 스냅샷 · 기존 게임 KST 필터',bars:n.bars,upperBars:verified.upperBars.filter(b=>tradableKST(b.time)),audit:n.audit});$('dataset').add(new Option('확인된 최근 실제 M1','verified'));}
